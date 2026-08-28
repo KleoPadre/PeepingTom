@@ -666,20 +666,20 @@ git commit -m "Добавить команды запуска и диагнос�
 ### Task 11: Homebrew formula и umbrella-cask
 
 **Files:**
-- Create: `packaging/homebrew/Formula/peepingtom.rb`
-- Create: `packaging/homebrew/Casks/peepingtom.rb`
+- Create: `packaging/homebrew/Formula/wispwire.rb`
+- Create: `packaging/homebrew/Casks/wispwire.rb`
 - Create: `packaging/homebrew/test_formula.sh`
 - Create: `.github/workflows/release.yml`
 - Test: `tests/unit/test_packaging.py`
 
 **Interfaces:**
-- Produces macOS install: `brew install --cask kleopadre/tap/peepingtom`
-- Produces Linux install: `brew install kleopadre/tap/peepingtom`
+- Produces macOS install: `brew install --cask kleopadre/tap/wispwire`
+- Produces Linux install: `brew install kleopadre/tap/wispwire`
 - Consumes stable GitHub tag and source archive SHA-256
 
 - [ ] **Step 1: Write failing structural packaging test**
 
-Parse both Ruby files as text and assert formula contains `depends_on "python@3.13"`, `depends_on "wireshark"`, `virtualenv_install_with_resources`, and a `test do` invoking `packetscope --version`; assert cask contains `depends_on formula: "kleopadre/tap/peepingtom"` and `depends_on cask: "wireshark-chmodbpf"`.
+Parse both Ruby files as text and assert formula contains `depends_on "python@3.13"`, `depends_on "wireshark"`, `virtualenv_install_with_resources`, and a `test do` invoking `packetscope --version`; assert cask contains `depends_on formula: "kleopadre/tap/wispwire"` and `depends_on cask: "wireshark-chmodbpf"`.
 
 - [ ] **Step 2: Run test to verify failure**
 
@@ -700,9 +700,9 @@ On tag `v*`, build sdist/wheel, run the full test matrix, publish checksummed Gi
 
 - [ ] **Step 6: Audit locally**
 
-Run: `brew style packaging/homebrew/Formula/peepingtom.rb packaging/homebrew/Casks/peepingtom.rb`  
-Run: `brew audit --strict --formula packaging/homebrew/Formula/peepingtom.rb`  
-Run: `brew audit --strict --cask packaging/homebrew/Casks/peepingtom.rb`  
+Run: `brew style packaging/homebrew/Formula/wispwire.rb packaging/homebrew/Casks/wispwire.rb`
+Run: `brew audit --strict --formula packaging/homebrew/Formula/wispwire.rb`
+Run: `brew audit --strict --cask packaging/homebrew/Casks/wispwire.rb`
 Expected: all commands exit 0.
 
 - [ ] **Step 7: Install in a clean test prefix and commit**

@@ -2,7 +2,7 @@
 
 **Дата:** 28 августа 2026 года  
 **Статус:** на утверждении  
-**Репозиторий:** PeepingTom  
+**Репозиторий:** WispWire
 **Рабочее имя приложения и CLI:** PacketScope / `packetscope`
 
 ## 1. Цель
@@ -261,10 +261,10 @@ Linux: ${XDG_CACHE_HOME:-~/.cache}/packetscope/sessions/<uuid>/
 
 ### macOS Apple Silicon
 
-Публикуются formula и umbrella-cask с одинаковым пользовательским токеном `peepingtom`. Установка:
+Публикуются formula и umbrella-cask с одинаковым пользовательским токеном `wispwire`. Установка:
 
 ```bash
-brew install --cask kleopadre/tap/peepingtom
+brew install --cask kleopadre/tap/wispwire
 ```
 
 Cask зависит от:
@@ -277,7 +277,7 @@ Cask зависит от:
 ### Linux
 
 ```bash
-brew install kleopadre/tap/peepingtom
+brew install kleopadre/tap/wispwire
 ```
 
 Formula устанавливает PacketScope, Python и `wireshark`. Права `dumpcap` проверяются отдельно. Если Linux capabilities не настроены, live-захват блокируется, а `doctor` показывает команду `setcap` для фактического пути `dumpcap`; весь TUI никогда не запускается от root.
