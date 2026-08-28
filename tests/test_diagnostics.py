@@ -5,7 +5,19 @@ from wispwire.diagnostics import collect_doctor_report, list_interfaces
 from wispwire.wireshark import ToolStatus
 
 
-def fake_interfaces_run(*_: object, **__: object) -> CompletedProcess[str]:
+def fake_interfaces_run(
+    command: list[str],
+    *,
+    capture_output: bool,
+    text: bool,
+    check: bool,
+    timeout: int,
+) -> CompletedProcess[str]:
+    assert command == ["dumpcap", "-D"]
+    assert capture_output is True
+    assert text is True
+    assert check is False
+    assert timeout == 5
     return CompletedProcess(
         ["dumpcap", "-D"],
         0,
@@ -19,26 +31,54 @@ def test_list_interfaces_parses_dumpcap_output() -> None:
 
 
 def test_list_interfaces_returns_empty_tuple_when_dumpcap_fails() -> None:
-    result = list_interfaces(
-        run=lambda *_args, **_kwargs: CompletedProcess(["dumpcap", "-D"], 1, "", "")
-    )
+    result = list_interfaces(run=failing_interfaces_run)
 
     assert result == ()
 
 
 def test_list_interfaces_returns_empty_tuple_when_dumpcap_cannot_start() -> None:
-    def failing_run(*_: object, **__: object) -> CompletedProcess[str]:
+    def failing_run(
+        command: list[str],
+        *,
+        capture_output: bool,
+        text: bool,
+        check: bool,
+        timeout: int,
+    ) -> CompletedProcess[str]:
+        assert command == ["dumpcap", "-D"]
+        assert capture_output is True
+        assert text is True
+        assert check is False
+        assert timeout == 5
         raise OSError("нет доступа")
 
     assert list_interfaces(run=failing_run) == ()
 
 
-def test_doctor_warns_when_capture_tools_are_missing() -> None:
-    def fake_missing_inspect(name: str) -> ToolStatus:
-        return ToolStatus(name, None, None, "утилита не найдена в PATH")
+def failing_interfaces_run(
+    command: list[str],
+    *,
+    capture_output: bool,
+    text: bool,
+    check: bool,
+    timeout: int,
+) -> CompletedProcess[str]:
+    assert command == ["dumpcap", "-D"]
+    assert capture_output is True
+    assert text is True
+    assert check is False
+    assert timeout == 5
+    return CompletedProcess(["dumpcap", "-D"], 1, "", "")
+
+
+def test_doctor_warns_when_dumpcap_is_missing() -> None:
+    def fake_inspect(name: str) -> ToolStatus:
+        if name == "dumpcap":
+            return ToolStatus(name, None, None, "утилита не найдена в PATH")
+        return ToolStatus(name, Path(f"/opt/bin/{name}"), "4.4.0", None)
 
     report = collect_doctor_report(
-        inspect=fake_missing_inspect,
+        inspect=fake_inspect,
         interfaces=lambda: (),
     )
 
@@ -85,3 +125,31 @@ def test_doctor_does_not_list_interfaces_without_working_dumpcap() -> None:
     assert called is False
     assert report.interfaces == ()
     assert report.capture_warning == "live-захват недоступен: установите dumpcap"
+
+
+def test_doctor_lists_interfaces_but_warns_when_tshark_is_unavailable() -> None:
+    def fake_inspect(name: str) -> ToolStatus:
+        if name == "tshark":
+            return ToolStatus(name, None, None, "утилита не найдена в PATH")
+        return ToolStatus(name, Path(f"/opt/bin/{name}"), "4.4.0", None)
+
+    report = collect_doctor_report(
+        inspect=fake_inspect,
+        interfaces=lambda: ("en0",),
+    )
+
+    assert report.interfaces == ("en0",)
+    assert report.capture_warning == "live-захват недоступен: установите tshark"
+
+
+def test_doctor_warns_when_dumpcap_returns_no_interfaces() -> None:
+    def fake_inspect(name: str) -> ToolStatus:
+        return ToolStatus(name, Path(f"/opt/bin/{name}"), "4.4.0", None)
+
+    report = collect_doctor_report(inspect=fake_inspect, interfaces=lambda: ())
+
+    assert report.interfaces == ()
+    assert (
+        report.capture_warning
+        == "live-захват недоступен: dumpcap не вернул доступных интерфейсов"
+    )

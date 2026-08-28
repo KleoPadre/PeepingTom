@@ -57,8 +57,21 @@ def collect_doctor_report(
 ) -> DoctorReport:
     """Собрать статус инструментов без запуска live-захвата."""
     tools = tuple(inspect(name) for name in ("tshark", "dumpcap", "mergecap"))
+    tshark = next(tool for tool in tools if tool.name == "tshark")
     dumpcap = next(tool for tool in tools if tool.name == "dumpcap")
-    capture_available = dumpcap.path is not None and dumpcap.error is None
+    dumpcap_available = dumpcap.path is not None and dumpcap.error is None
+    available_interfaces = interfaces() if dumpcap_available else ()
+
+    if tshark.path is None or tshark.error is not None:
+        capture_warning = "live-захват недоступен: установите tshark"
+    elif not dumpcap_available:
+        capture_warning = "live-захват недоступен: установите dumpcap"
+    elif not available_interfaces:
+        capture_warning = (
+            "live-захват недоступен: dumpcap не вернул доступных интерфейсов"
+        )
+    else:
+        capture_warning = None
 
     wispwire_version = _get_wispwire_version()
 
@@ -66,10 +79,8 @@ def collect_doctor_report(
         python_version=platform.python_version(),
         wispwire_version=wispwire_version,
         tools=tools,
-        interfaces=interfaces() if capture_available else (),
-        capture_warning=(
-            None if capture_available else "live-захват недоступен: установите dumpcap"
-        ),
+        interfaces=available_interfaces,
+        capture_warning=capture_warning,
     )
 
 
