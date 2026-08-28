@@ -4,6 +4,8 @@ from typer.testing import CliRunner
 
 from wispwire.cli import app
 from wispwire.diagnostics import DoctorReport
+from wispwire.packets import PacketSummary
+from wispwire.tshark import TsharkReadError
 from wispwire.wireshark import ToolStatus
 
 
@@ -65,3 +67,103 @@ def test_interfaces_prints_numbered_available_interfaces(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "1. en0" in result.stdout
     assert "2. lo0" in result.stdout
+
+
+def test_open_prints_packet_table(monkeypatch, tmp_path) -> None:
+    capture_path = tmp_path / "capture.pcapng"
+    capture_path.touch()
+    packet = PacketSummary(
+        number=1,
+        relative_time="0.000000",
+        source="192.0.2.1",
+        destination="192.0.2.53",
+        protocol="DNS",
+        length=74,
+        info="Query",
+    )
+    monkeypatch.setattr(
+        "wispwire.cli.inspect_tool",
+        lambda _: ToolStatus("tshark", Path("/opt/bin/tshark"), "4.4.0", None),
+    )
+    monkeypatch.setattr("wispwire.cli.iter_packet_summaries", lambda *_: iter([packet]))
+
+    result = CliRunner().invoke(app, ["open", str(capture_path), "--limit", "10"])
+
+    assert result.exit_code == 0
+    assert "DNS" in result.stdout
+    assert "Query" in result.stdout
+
+
+def test_open_reports_empty_capture(monkeypatch, tmp_path) -> None:
+    capture_path = tmp_path / "capture.pcapng"
+    capture_path.touch()
+    monkeypatch.setattr(
+        "wispwire.cli.inspect_tool",
+        lambda _: ToolStatus("tshark", Path("/opt/bin/tshark"), "4.4.0", None),
+    )
+    monkeypatch.setattr("wispwire.cli.iter_packet_summaries", lambda *_: iter(()))
+
+    result = CliRunner().invoke(app, ["open", str(capture_path)])
+
+    assert result.exit_code == 0
+    assert "Пакеты не найдены." in result.stdout
+
+
+def test_open_rejects_missing_capture_path() -> None:
+    result = CliRunner().invoke(app, ["open", "missing.pcapng"])
+
+    assert result.exit_code == 2
+    assert "Файл захвата не найден" in result.stdout
+
+
+def test_open_rejects_directory_instead_of_capture(tmp_path) -> None:
+    result = CliRunner().invoke(app, ["open", str(tmp_path)])
+
+    assert result.exit_code == 2
+    assert "Ожидается файл захвата" in result.stdout
+
+
+def test_open_reports_missing_tshark(monkeypatch, tmp_path) -> None:
+    capture_path = tmp_path / "capture.pcapng"
+    capture_path.touch()
+    monkeypatch.setattr(
+        "wispwire.cli.inspect_tool",
+        lambda _: ToolStatus("tshark", None, None, "утилита не найдена в PATH"),
+    )
+
+    result = CliRunner().invoke(app, ["open", str(capture_path)])
+
+    assert result.exit_code == 1
+    assert "wispwire doctor" in result.stdout
+
+
+def test_open_reports_tshark_read_error_without_traceback(
+    monkeypatch, tmp_path
+) -> None:
+    capture_path = tmp_path / "capture.pcapng"
+    capture_path.touch()
+    monkeypatch.setattr(
+        "wispwire.cli.inspect_tool",
+        lambda _: ToolStatus("tshark", Path("/opt/bin/tshark"), "4.4.0", None),
+    )
+
+    def raise_read_error(*_) -> None:
+        raise TsharkReadError("Повреждённый захват")
+
+    monkeypatch.setattr("wispwire.cli.iter_packet_summaries", raise_read_error)
+
+    result = CliRunner().invoke(app, ["open", str(capture_path)])
+
+    assert result.exit_code == 1
+    assert "Повреждённый захват" in result.stdout
+    assert "Traceback" not in result.stdout
+
+
+def test_open_rejects_zero_limit(tmp_path) -> None:
+    capture_path = tmp_path / "capture.pcapng"
+    capture_path.touch()
+
+    result = CliRunner().invoke(app, ["open", str(capture_path), "--limit", "0"])
+
+    assert result.exit_code == 2
+    assert "Invalid value" in result.output

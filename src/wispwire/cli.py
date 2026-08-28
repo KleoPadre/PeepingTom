@@ -1,8 +1,12 @@
+from pathlib import Path
+
 import typer
 from rich.console import Console
 from rich.table import Table
 
 from wispwire.diagnostics import collect_doctor_report, list_interfaces
+from wispwire.tshark import TsharkReadError, iter_packet_summaries
+from wispwire.wireshark import inspect_tool
 
 app = typer.Typer(
     help="WispWire — терминальная утилита для диагностики сетевого анализа."
@@ -52,6 +56,59 @@ def interfaces() -> None:
         return
 
     _print_interfaces(available_interfaces)
+
+
+@app.command()
+def open(
+    capture_path: Path,
+    limit: int = typer.Option(
+        1000, min=1, help="Максимальное число выводимых пакетов."
+    ),
+) -> None:
+    """Открыть готовый захват и вывести сводку пакетов."""
+    if not capture_path.exists():
+        console.print("Файл захвата не найден.")
+        raise typer.Exit(code=2)
+    if not capture_path.is_file():
+        console.print("Ожидается файл захвата.")
+        raise typer.Exit(code=2)
+
+    status = inspect_tool("tshark")
+    if status.path is None:
+        console.print("TShark недоступен. Запустите `wispwire doctor` для проверки.")
+        raise typer.Exit(code=1)
+
+    packets_table = Table()
+    packets_table.add_column("No.")
+    packets_table.add_column("Time")
+    packets_table.add_column("Source")
+    packets_table.add_column("Destination")
+    packets_table.add_column("Protocol")
+    packets_table.add_column("Length")
+    packets_table.add_column("Info")
+
+    packet_found = False
+    try:
+        for packet in iter_packet_summaries(capture_path, status.path, limit):
+            packet_found = True
+            packets_table.add_row(
+                str(packet.number),
+                packet.relative_time,
+                packet.source,
+                packet.destination,
+                packet.protocol,
+                str(packet.length),
+                packet.info,
+            )
+    except TsharkReadError as error:
+        console.print(f"Не удалось прочитать захват: {error}")
+        raise typer.Exit(code=1) from None
+
+    if packet_found:
+        console.print(packets_table)
+        return
+
+    console.print("Пакеты не найдены.")
 
 
 def _print_interfaces(interfaces: tuple[str, ...]) -> None:
