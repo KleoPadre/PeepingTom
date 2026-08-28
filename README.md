@@ -19,3 +19,20 @@ python3 -m venv .venv
 .venv/bin/ruff format --check src tests
 .venv/bin/mypy src
 ```
+
+## Диагностика окружения
+
+Проверить наличие `tshark`, `dumpcap`, `mergecap` и доступность live-захвата:
+
+```bash
+.venv/bin/wispwire doctor
+```
+
+Посмотреть интерфейсы, которые видит `dumpcap`:
+
+```bash
+.venv/bin/wispwire interfaces
+```
+
+Эти команды только читают сведения об окружении и не требуют `sudo`. Права могут
+понадобиться позднее, при запуске live-захвата.
