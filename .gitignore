@@ -8,3 +8,4 @@ __pycache__/
 
 # Служебные артефакты агентной разработки
 .superpowers/
+.worktrees/
