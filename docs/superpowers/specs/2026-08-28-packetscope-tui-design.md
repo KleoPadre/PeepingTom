@@ -100,8 +100,8 @@ running|stopped|limit_reached → restarting → running
 
 ```text
 global_number
-segment_id
-segment_frame_number
+segment_id                 # null только у ещё не закрытого live-сегмента
+segment_frame_number       # null только у ещё не закрытого live-сегмента
 captured_at
 relative_time
 source
@@ -112,7 +112,7 @@ info
 info_casefold
 ```
 
-`global_number` не меняется при фильтрации. `segment_frame_number` используется только для обращения к `tshark` внутри конкретного сегмента.
+`global_number` не меняется при фильтрации. После закрытия live-сегмент перечитывается, provisional-строки получают `segment_id` и `segment_frame_number`; только после этого для них доступны display filter и Details. `segment_frame_number` используется только для обращения к `tshark` внутри конкретного сегмента.
 
 ## 5. Live-захват
 
