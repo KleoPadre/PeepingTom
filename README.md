@@ -8,13 +8,14 @@ WispWire — терминальная утилита для диагностик
 
 ```bash
 python3 -m venv .venv
-python -m pip install -e ".[dev]"
+. .venv/bin/activate
+python -m pip install -e '.[dev]'
 ```
 
 Если окружение уже создано, используйте его интерпретатор:
 
 ```bash
-.venv/bin/python -m pip install -e ".[dev]"
+.venv/bin/python -m pip install -e '.[dev]'
 ```
 
 ## Проверки
