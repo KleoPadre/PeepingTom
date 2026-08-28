@@ -5,7 +5,7 @@
 Рабочее название:
 
 ```text
-PacketScope TUI
+WispWire TUI
 ```
 
 Альтернативы:
@@ -39,13 +39,13 @@ pcap-tui
 Пользователь запускает:
 
 ```bash
-packetscope open ~/Downloads/capture.pcapng
+wispwire open ~/Downloads/capture.pcapng
 ```
 
 Открывается TUI-интерфейс:
 
 ```text
-┌ PacketScope ─ capture.pcapng ─────────────────────────────────────────────┐
+┌ WispWire ─ capture.pcapng ─────────────────────────────────────────────┐
 │ Filter: ip.addr == 192.168.1.4 && udp                         Packets: 842 │
 ├──────┬──────────┬──────────────┬──────────────┬───────┬──────────────────┤
 │ No   │ Time     │ Source       │ Destination  │ Proto │ Info             │
@@ -62,7 +62,7 @@ packetscope open ~/Downloads/capture.pcapng
 Пользователь запускает:
 
 ```bash
-sudo packetscope capture --iface en0 --host 192.168.1.4
+sudo wispwire capture --iface en0 --host 192.168.1.4
 ```
 
 Утилита:
@@ -76,7 +76,7 @@ sudo packetscope capture --iface en0 --host 192.168.1.4
 Пример:
 
 ```bash
-sudo packetscope capture --iface en0 --host 192.168.1.4 --out telegram-call.pcapng
+sudo wispwire capture --iface en0 --host 192.168.1.4 --out telegram-call.pcapng
 ```
 
 ---
@@ -176,7 +176,7 @@ Windows
 ## 6.1. Проверка окружения
 
 ```bash
-packetscope doctor
+wispwire doctor
 ```
 
 Проверяет:
@@ -186,12 +186,12 @@ packetscope doctor
 - видны ли сетевые интерфейсы;
 - есть ли права на захват;
 - версия Python;
-- версия PacketScope.
+- версия WispWire.
 
 Пример вывода:
 
 ```text
-PacketScope Doctor
+WispWire Doctor
 
 tshark      OK   /opt/homebrew/bin/tshark
 dumpcap     OK   /opt/homebrew/bin/dumpcap
@@ -204,7 +204,7 @@ permissions WARN live capture may require sudo
 ## 6.2. Список интерфейсов
 
 ```bash
-packetscope interfaces
+wispwire interfaces
 ```
 
 Пример вывода:
@@ -223,15 +223,15 @@ Available interfaces
 ## 6.3. Открыть PCAP/PCAPNG
 
 ```bash
-packetscope open file.pcapng
+wispwire open file.pcapng
 ```
 
 Параметры:
 
 ```bash
-packetscope open file.pcapng --host 192.168.1.4
-packetscope open file.pcapng --filter "udp && ip.addr == 192.168.1.4"
-packetscope open file.pcapng --limit 5000
+wispwire open file.pcapng --host 192.168.1.4
+wispwire open file.pcapng --filter "udp && ip.addr == 192.168.1.4"
+wispwire open file.pcapng --limit 5000
 ```
 
 ---
@@ -239,31 +239,31 @@ packetscope open file.pcapng --limit 5000
 ## 6.4. Захват трафика
 
 ```bash
-sudo packetscope capture --iface en0
+sudo wispwire capture --iface en0
 ```
 
 С фильтром по устройству:
 
 ```bash
-sudo packetscope capture --iface en0 --host 192.168.1.4
+sudo wispwire capture --iface en0 --host 192.168.1.4
 ```
 
 С указанием файла:
 
 ```bash
-sudo packetscope capture --iface en0 --host 192.168.1.4 --out capture.pcapng
+sudo wispwire capture --iface en0 --host 192.168.1.4 --out capture.pcapng
 ```
 
 С ограничением по времени:
 
 ```bash
-sudo packetscope capture --iface en0 --host 192.168.1.4 --duration 60
+sudo wispwire capture --iface en0 --host 192.168.1.4 --duration 60
 ```
 
 С BPF-фильтром:
 
 ```bash
-sudo packetscope capture --iface en0 --bpf "host 192.168.1.4 and udp"
+sudo wispwire capture --iface en0 --bpf "host 192.168.1.4 and udp"
 ```
 
 ---
@@ -271,7 +271,7 @@ sudo packetscope capture --iface en0 --bpf "host 192.168.1.4 and udp"
 ## 6.5. Быстрый анализ Telegram
 
 ```bash
-packetscope telegram capture.pcapng --host 192.168.1.4
+wispwire telegram capture.pcapng --host 192.168.1.4
 ```
 
 Утилита должна найти:
@@ -297,7 +297,7 @@ IP            Proto  Packets  Bytes    Evidence
 ## 6.6. Top IP
 
 ```bash
-packetscope top capture.pcapng --host 192.168.1.4
+wispwire top capture.pcapng --host 192.168.1.4
 ```
 
 Показывает самые активные внешние IP:
@@ -316,7 +316,7 @@ IP              Direction  Proto  Packets  Bytes
 ## 6.7. STUN/TURN
 
 ```bash
-packetscope stun capture.pcapng
+wispwire stun capture.pcapng
 ```
 
 Показывает только STUN/TURN-пакеты:
@@ -335,7 +335,7 @@ No   Time     Source       Destination  Info
 ## 6.8. DNS
 
 ```bash
-packetscope dns capture.pcapng
+wispwire dns capture.pcapng
 ```
 
 Показывает DNS-запросы:
@@ -353,7 +353,7 @@ Time     Client       Query
 ## 6.9. TLS SNI
 
 ```bash
-packetscope tls capture.pcapng
+wispwire tls capture.pcapng
 ```
 
 Показывает TLS Server Name Indication:
@@ -601,7 +601,7 @@ JSON
 Команды:
 
 ```bash
-packetscope export capture.pcapng --format csv --out result.csv
+wispwire export capture.pcapng --format csv --out result.csv
 ```
 
 ---
@@ -611,7 +611,7 @@ packetscope export capture.pcapng --format csv --out result.csv
 ## 9.1. Экран live-захвата
 
 ```text
-┌ PacketScope Live Capture ─────────────────────────────┐
+┌ WispWire Live Capture ─────────────────────────────┐
 │ Interface: en0     Filter: host 192.168.1.4           │
 │ Output: ~/Captures/2026-08-28_telegram-call.pcapng    │
 ├ Stats ────────────────────────────────────────────────┤
@@ -650,7 +650,7 @@ packetscope export capture.pcapng --format csv --out result.csv
 По умолчанию:
 
 ```text
-~/PacketScope/Captures/
+~/WispWire/Captures/
 ```
 
 Имена файлов:
@@ -665,7 +665,7 @@ telegram_2026-08-28_14-30-22.pcapng
 Файл настроек:
 
 ```text
-~/.config/packetscope/config.toml
+~/.config/wispwire/config.toml
 ```
 
 Пример:
@@ -673,7 +673,7 @@ telegram_2026-08-28_14-30-22.pcapng
 ```toml
 default_interface = "en0"
 default_host = "192.168.1.4"
-captures_dir = "~/PacketScope/Captures"
+captures_dir = "~/WispWire/Captures"
 theme = "dark"
 max_rows = 10000
 ```
@@ -928,9 +928,9 @@ Telegram candidates, not guaranteed Telegram ownership
 Создать CLI-основу:
 
 ```text
-packetscope doctor
-packetscope interfaces
-packetscope open
+wispwire doctor
+wispwire interfaces
+wispwire open
 ```
 
 ## Этап 2
@@ -983,7 +983,7 @@ auto-open
 Упаковка:
 
 ```text
-pipx install packetscope
+pipx install wispwire
 brew tap / formula
 README
 screenshots
@@ -996,25 +996,25 @@ examples
 
 ```bash
 # Проверка окружения
-packetscope doctor
+wispwire doctor
 
 # Список интерфейсов
-packetscope interfaces
+wispwire interfaces
 
 # Открыть pcapng
-packetscope open ~/Downloads/capture.pcapng
+wispwire open ~/Downloads/capture.pcapng
 
 # Открыть с фильтром по MacBook
-packetscope open ~/Downloads/capture.pcapng --filter "ip.addr == 192.168.1.4"
+wispwire open ~/Downloads/capture.pcapng --filter "ip.addr == 192.168.1.4"
 
 # Найти Telegram-звонки
-packetscope telegram ~/Downloads/capture.pcapng --host 192.168.1.4
+wispwire telegram ~/Downloads/capture.pcapng --host 192.168.1.4
 
 # Захватить трафик MacBook
-sudo packetscope capture --iface en0 --host 192.168.1.4 --out telegram-call.pcapng
+sudo wispwire capture --iface en0 --host 192.168.1.4 --out telegram-call.pcapng
 
 # Показать top IP
-packetscope top telegram-call.pcapng --host 192.168.1.4
+wispwire top telegram-call.pcapng --host 192.168.1.4
 ```
 
 ---

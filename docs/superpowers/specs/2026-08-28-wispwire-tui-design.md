@@ -1,13 +1,15 @@
-# Дизайн PacketScope TUI
+# Дизайн WispWire TUI
 
-**Дата:** 28 августа 2026 года  
-**Статус:** на утверждении  
+**Дата:** 28 августа 2026 года
+
+**Статус:** на утверждении
+
 **Репозиторий:** WispWire
-**Рабочее имя приложения и CLI:** PacketScope / `packetscope`
+**Рабочее имя приложения и CLI:** WispWire / `wispwire`
 
 ## 1. Цель
 
-PacketScope — современная терминальная утилита для macOS Apple Silicon и Linux, которая:
+WispWire — современная терминальная утилита для macOS Apple Silicon и Linux, которая:
 
 - отображает сетевые пакеты в реальном времени;
 - открывает существующие файлы PCAP и PCAPNG;
@@ -58,13 +60,13 @@ PacketScope — современная терминальная утилита �
 - `mergecap` — объединение сегментов при сохранении;
 - pytest, pytest-asyncio, Ruff и mypy — разработка и проверки.
 
-PacketScope распространяется под MIT. Прямые runtime-зависимости допускаются только с лицензиями MIT, BSD-2-Clause, BSD-3-Clause, Apache-2.0, PSF-2.0 или ISC. Wireshark распространяется под GPL-2.0-or-later и используется как отдельно установленный внешний набор исполняемых файлов; его код и бинарные файлы не встраиваются в PacketScope.
+WispWire распространяется под MIT. Прямые runtime-зависимости допускаются только с лицензиями MIT, BSD-2-Clause, BSD-3-Clause, Apache-2.0, PSF-2.0 или ISC. Wireshark распространяется под GPL-2.0-or-later и используется как отдельно установленный внешний набор исполняемых файлов; его код и бинарные файлы не встраиваются в WispWire.
 
 ## 4. Архитектура
 
 ### 4.1. Основные компоненты
 
-`PacketScopeApp` управляет экранами, фокусом, горячими клавишами и подпиской на события сессии.
+`WispWireApp` управляет экранами, фокусом, горячими клавишами и подпиской на события сессии.
 
 `CaptureSession` реализует конечный автомат состояний:
 
@@ -90,7 +92,7 @@ running|stopped|limit_reached → restarting → running
 
 `SaveService` объединяет сегменты во временный файл назначения через `mergecap`, проверяет результат и атомарно переименовывает его в выбранный `.pcapng`.
 
-`SessionCleanup` удаляет только принадлежащие PacketScope каталоги с корректным manifest и UUID.
+`SessionCleanup` удаляет только принадлежащие WispWire каталоги с корректным manifest и UUID.
 
 `DoctorService` проверяет Python, `tshark`, `dumpcap`, `mergecap`, их версии, интерфейсы, права захвата, SQLite FTS5 и доступное место.
 
@@ -100,8 +102,8 @@ running|stopped|limit_reached → restarting → running
 
 ```text
 global_number
-segment_id                 # null только у ещё не закрытого live-сегмента
-segment_frame_number       # null только у ещё не закрытого live-сегмента
+segment_id
+segment_frame_number
 captured_at
 relative_time
 source
@@ -112,17 +114,17 @@ info
 info_casefold
 ```
 
-`global_number` не меняется при фильтрации. После закрытия live-сегмент перечитывается, provisional-строки получают `segment_id` и `segment_frame_number`; только после этого для них доступны display filter и Details. `segment_frame_number` используется только для обращения к `tshark` внутри конкретного сегмента.
+`global_number` не меняется при фильтрации. `segment_frame_number` используется только для обращения к `tshark` внутри конкретного сегмента.
 
 ## 5. Live-захват
 
 ### 5.1. Запуск
 
 ```bash
-packetscope capture
-packetscope capture --iface en0
-packetscope capture --capture-filter "host 192.168.1.4"
-packetscope capture --max-size 1GB
+wispwire capture
+wispwire capture --iface en0
+wispwire capture --capture-filter "host 192.168.1.4"
+wispwire capture --max-size 1GB
 ```
 
 Без `--iface` TUI открывает экран выбора интерфейса. С переданным интерфейсом захват начинается сразу после проверок.
@@ -154,11 +156,11 @@ Display filter нельзя динамически менять в одном п
 ## 6. Открытие файла
 
 ```bash
-packetscope open capture.pcap
-packetscope open capture.pcapng
+wispwire open capture.pcap
+wispwire open capture.pcapng
 ```
 
-Исходный файл никогда не изменяется и не удаляется. PacketScope создаёт только временный SQLite-индекс. Индексация идёт потоково: первые строки появляются до завершения обработки всего файла. Прогресс и возможность отмены отображаются в статусной строке.
+Исходный файл никогда не изменяется и не удаляется. WispWire создаёт только временный SQLite-индекс. Индексация идёт потоково: первые строки появляются до завершения обработки всего файла. Прогресс и возможность отмены отображаются в статусной строке.
 
 Display filter запускает `tshark -Y` для исходного файла. Поиск `Info` использует тот же индекс, что и live-режим. Details и hex загружаются по выбранному `frame.number`.
 
@@ -235,11 +237,11 @@ telegram
 Каталоги сессий:
 
 ```text
-macOS: ~/Library/Caches/PacketScope/sessions/<uuid>/
-Linux: ${XDG_CACHE_HOME:-~/.cache}/packetscope/sessions/<uuid>/
+macOS: ~/Library/Caches/WispWire/sessions/<uuid>/
+Linux: ${XDG_CACHE_HOME:-~/.cache}/wispwire/sessions/<uuid>/
 ```
 
-Каждый каталог содержит manifest с UUID, PID, временем старта, версией схемы и списком принадлежащих файлов. При старте удаляются только каталоги с валидным manifest, отсутствующим живым PID и путём строго внутри каталога PacketScope. Символические ссылки и пути с выходом из корня отклоняются.
+Каждый каталог содержит manifest с UUID, PID, временем старта, версией схемы и списком принадлежащих файлов. При старте удаляются только каталоги с валидным manifest, отсутствующим живым PID и путём строго внутри каталога WispWire. Символические ссылки и пути с выходом из корня отклоняются.
 
 При штатном выходе, `SIGINT`, `SIGTERM` и `SIGHUP` процесс захвата завершается, затем временная сессия удаляется. После аварийного завершения или `SIGKILL` данные удаляются при следующем запуске. Явно сохранённые файлы находятся вне session root и никогда не участвуют в cleanup.
 
@@ -269,10 +271,10 @@ brew install --cask kleopadre/tap/wispwire
 
 Cask зависит от:
 
-- formula PacketScope, которая в свою очередь зависит от formula `wireshark` с CLI-инструментами;
+- formula WispWire, которая в свою очередь зависит от formula `wireshark` с CLI-инструментами;
 - cask `wireshark-chmodbpf`, настраивающего непривилегированный доступ к BPF.
 
-Установка ChmodBPF может запросить пароль и потребовать перезагрузку или повторный вход. После установки `packetscope doctor` показывает точный статус.
+Установка ChmodBPF может запросить пароль и потребовать перезагрузку или повторный вход. После установки `wispwire doctor` показывает точный статус.
 
 ### Linux
 
@@ -280,7 +282,7 @@ Cask зависит от:
 brew install kleopadre/tap/wispwire
 ```
 
-Formula устанавливает PacketScope, Python и `wireshark`. Права `dumpcap` проверяются отдельно. Если Linux capabilities не настроены, live-захват блокируется, а `doctor` показывает команду `setcap` для фактического пути `dumpcap`; весь TUI никогда не запускается от root.
+Formula устанавливает WispWire, Python и `wireshark`. Права `dumpcap` проверяются отдельно. Если Linux capabilities не настроены, live-захват блокируется, а `doctor` показывает команду `setcap` для фактического пути `dumpcap`; весь TUI никогда не запускается от root.
 
 Formula и cask используют только стабильные GitHub Releases с фиксированными SHA-256. Обновления проверяются в CI через `brew audit`, `brew style`, установку в чистом окружении и `brew test`.
 
@@ -321,7 +323,7 @@ Formula и cask используют только стабильные GitHub Re
 - macOS Apple Silicon в CI или на выделенном runner;
 - Linux ARM64 и x86_64;
 - установка из собственного tap;
-- `packetscope doctor` после чистой установки;
+- `wispwire doctor` после чистой установки;
 - smoke-тест открытия файла без прав capture;
 - ручной smoke-тест live-захвата с ChmodBPF.
 
