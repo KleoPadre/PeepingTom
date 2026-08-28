@@ -45,7 +45,10 @@ def build_fields_command(tshark_path: Path, capture_path: Path) -> list[str]:
 
 
 def parse_packet_row(row: str) -> PacketSummary:
-    fields = next(csv.reader([row.replace(r"\"", '""')], delimiter="\t", quotechar='"'))
+    try:
+        fields = next(csv.reader([row], delimiter="\t", quotechar='"', strict=True))
+    except csv.Error as error:
+        raise TsharkReadError("Некорректная строка TSV в выводе TShark.") from error
     if len(fields) != 7:
         raise TsharkReadError("Строка вывода TShark должна содержать ровно семь полей.")
 

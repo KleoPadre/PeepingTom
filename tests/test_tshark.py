@@ -94,15 +94,24 @@ def test_build_fields_command_uses_read_only_tshark_fields() -> None:
     ]
 
 
-def test_parse_packet_row_preserves_quoted_tabs_and_quotes() -> None:
+def test_parse_packet_row_preserves_tshark_doubled_quotes_and_trailing_backslash() -> (
+    None
+):
     row = (
         '"7"\t"0.250000"\t"10.0.0.1"\t"10.0.0.2"\t"DNS"\t"82"'
-        '\t"Query \\"example\\"\\tname"\n'
+        '\t"Query ""example""\\\\"\n'
     )
 
     packet = parse_packet_row(row)
 
-    assert packet.info == 'Query "example"\\tname'
+    assert packet.info == 'Query "example"\\\\'
+
+
+def test_parse_packet_row_reports_malformed_tsv() -> None:
+    row = '"7"\t"0.250000"\t"10.0.0.1"\t"10.0.0.2"\t"DNS"\t"82"\t"Query\n'
+
+    with pytest.raises(TsharkReadError, match="Некорректн"):
+        parse_packet_row(row)
 
 
 def test_iter_packet_summaries_stops_after_limit() -> None:

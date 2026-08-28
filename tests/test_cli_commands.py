@@ -1,5 +1,7 @@
+from collections.abc import Iterator
 from pathlib import Path
 
+from rich.console import Console
 from typer.testing import CliRunner
 
 from wispwire.cli import app
@@ -157,6 +159,65 @@ def test_open_reports_tshark_read_error_without_traceback(
     assert result.exit_code == 1
     assert "Повреждённый захват" in result.stdout
     assert "Traceback" not in result.stdout
+
+
+def test_open_prints_received_packets_before_tshark_read_error(
+    monkeypatch, tmp_path
+) -> None:
+    capture_path = tmp_path / "capture.pcapng"
+    capture_path.touch()
+    packet = PacketSummary(
+        number=1,
+        relative_time="0.000000",
+        source="192.0.2.1",
+        destination="192.0.2.53",
+        protocol="DNS",
+        length=74,
+        info="Получен до ошибки",
+    )
+    monkeypatch.setattr(
+        "wispwire.cli.inspect_tool",
+        lambda _: ToolStatus("tshark", Path("/opt/bin/tshark"), "4.4.0", None),
+    )
+
+    def packets_then_error(*_) -> Iterator[PacketSummary]:
+        yield packet
+        raise TsharkReadError("Повреждённый захват")
+
+    monkeypatch.setattr("wispwire.cli.iter_packet_summaries", packets_then_error)
+    monkeypatch.setattr("wispwire.cli.console", Console(width=200))
+
+    result = CliRunner().invoke(app, ["open", str(capture_path)])
+
+    assert result.exit_code == 1
+    assert "Получен до ошибки" in result.stdout
+    assert "Не удалось прочитать захват: Повреждённый захват" in result.stdout
+
+
+def test_open_renders_untrusted_packet_text_literally(monkeypatch, tmp_path) -> None:
+    capture_path = tmp_path / "capture.pcapng"
+    capture_path.touch()
+    packet = PacketSummary(
+        number=1,
+        relative_time="0.000000",
+        source="[red]источник[/red]",
+        destination="192.0.2.53",
+        protocol="DNS",
+        length=74,
+        info="[red]не интерпретировать[/red]",
+    )
+    monkeypatch.setattr(
+        "wispwire.cli.inspect_tool",
+        lambda _: ToolStatus("tshark", Path("/opt/bin/tshark"), "4.4.0", None),
+    )
+    monkeypatch.setattr("wispwire.cli.iter_packet_summaries", lambda *_: iter([packet]))
+    monkeypatch.setattr("wispwire.cli.console", Console(width=200))
+
+    result = CliRunner().invoke(app, ["open", str(capture_path)])
+
+    assert result.exit_code == 0
+    assert "[red]источник[/red]" in result.stdout
+    assert "[red]не интерпретировать[/red]" in result.stdout
 
 
 def test_open_rejects_zero_limit(tmp_path) -> None:

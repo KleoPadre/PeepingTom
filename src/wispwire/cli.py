@@ -3,6 +3,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
 
 from wispwire.diagnostics import collect_doctor_report, list_interfaces
 from wispwire.tshark import TsharkReadError, iter_packet_summaries
@@ -92,15 +93,17 @@ def open(
         for packet in iter_packet_summaries(capture_path, status.path, limit):
             packet_found = True
             packets_table.add_row(
-                str(packet.number),
-                packet.relative_time,
-                packet.source,
-                packet.destination,
-                packet.protocol,
-                str(packet.length),
-                packet.info,
+                _literal_text(packet.number),
+                _literal_text(packet.relative_time),
+                _literal_text(packet.source),
+                _literal_text(packet.destination),
+                _literal_text(packet.protocol),
+                _literal_text(packet.length),
+                _literal_text(packet.info),
             )
     except TsharkReadError as error:
+        if packet_found:
+            console.print(packets_table)
         console.print(f"Не удалось прочитать захват: {error}")
         raise typer.Exit(code=1) from None
 
@@ -109,6 +112,10 @@ def open(
         return
 
     console.print("Пакеты не найдены.")
+
+
+def _literal_text(value: object) -> Text:
+    return Text(str(value))
 
 
 def _print_interfaces(interfaces: tuple[str, ...]) -> None:
