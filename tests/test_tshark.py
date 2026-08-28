@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 from pathlib import Path
+from threading import Event
 
 import pytest
 
@@ -23,18 +24,39 @@ class FakeProcess:
         self.stderr = FakeStderr(stderr)
         self.returncode = returncode
         self.wait_called = False
+        self.terminate_called = False
 
     def wait(self) -> int:
         self.wait_called = True
         return self.returncode
 
+    def terminate(self) -> None:
+        self.terminate_called = True
+        self.returncode = -15
+
 
 class FakeStderr:
     def __init__(self, value: str) -> None:
         self.value = value
+        self.read_started = Event()
 
     def read(self) -> str:
+        self.read_started.set()
         return self.value
+
+
+class LimitProcess(FakeProcess):
+    def wait(self) -> int:
+        if not self.terminate_called:
+            raise AssertionError("Процесс должен быть остановлен до ожидания")
+        return super().wait()
+
+
+class StderrFirstProcess(FakeProcess):
+    def wait(self) -> int:
+        if not self.stderr.read_started.wait(timeout=0.1):
+            raise AssertionError("stderr должен читаться до ожидания процесса")
+        return super().wait()
 
 
 def test_build_fields_command_uses_read_only_tshark_fields() -> None:
@@ -84,7 +106,7 @@ def test_parse_packet_row_preserves_quoted_tabs_and_quotes() -> None:
 
 
 def test_iter_packet_summaries_stops_after_limit() -> None:
-    process = FakeProcess(
+    process = LimitProcess(
         iter(
             [
                 '"1"\t"0.000000"\t"a"\t"b"\t"DNS"\t"72"\t"Первый"\n',
@@ -103,6 +125,23 @@ def test_iter_packet_summaries_stops_after_limit() -> None:
     )
 
     assert packets == [PacketSummary(1, "0.000000", "a", "b", "DNS", 72, "Первый")]
+    assert process.terminate_called
+    assert process.wait_called
+
+
+def test_iter_packet_summaries_drains_stderr_before_waiting_for_process() -> None:
+    process = StderrFirstProcess(iter(()), stderr="Предупреждение\n")
+
+    packets = list(
+        iter_packet_summaries(
+            Path("capture.pcapng"),
+            Path("tshark"),
+            limit=1,
+            popen=lambda *_args, **_kwargs: process,
+        )
+    )
+
+    assert packets == []
     assert process.wait_called
 
 
@@ -154,6 +193,9 @@ def test_iter_packet_summaries_reports_malformed_row_after_previous_packets() ->
     assert next(packets).number == 1
     with pytest.raises(TsharkReadError, match="семь"):
         next(packets)
+
+    assert process.terminate_called
+    assert process.wait_called
 
 
 def test_iter_packet_summaries_reports_startup_error() -> None:

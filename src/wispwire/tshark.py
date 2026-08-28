@@ -2,6 +2,7 @@ import csv
 import subprocess
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from threading import Thread
 
 from wispwire.packets import PacketSummary
 
@@ -89,13 +90,32 @@ def iter_packet_summaries(
     assert process.stdout is not None
     assert process.stderr is not None
 
-    for count, row in enumerate(process.stdout, start=1):
-        yield parse_packet_row(row)
-        if count >= limit:
-            break
+    stderr_stream = process.stderr
+    stderr_parts: list[str] = []
 
-    return_code = process.wait()
-    stderr = process.stderr.read()
-    if return_code != 0:
+    def read_stderr() -> None:
+        stderr_parts.append(stderr_stream.read())
+
+    stderr_thread = Thread(target=read_stderr)
+    stderr_thread.start()
+    completed = False
+    stopped_early = False
+
+    try:
+        for count, row in enumerate(process.stdout, start=1):
+            yield parse_packet_row(row)
+            if count >= limit:
+                stopped_early = True
+                break
+        else:
+            completed = True
+    finally:
+        if not completed:
+            process.terminate()
+        return_code = process.wait()
+        stderr_thread.join()
+
+    if not stopped_early and return_code != 0:
+        stderr = "".join(stderr_parts)
         message = stderr.strip() or f"TShark завершился с кодом {return_code}."
         raise TsharkReadError(message)
