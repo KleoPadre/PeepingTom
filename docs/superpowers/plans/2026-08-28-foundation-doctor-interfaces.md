@@ -10,6 +10,15 @@
 
 **Спецификация:** `docs/superpowers/specs/2026-08-28-wispwire-tui-design.md`
 
+## Фактический статус
+
+На 28 августа 2026 года завершены задачи 1–3. Это подтверждают коммиты
+`5ab2696`, `121b46b` и `ab51aeb`, а также существующие модули и тесты.
+Задачи 4–5 остаются невыполненными: в CLI ещё нет команд `doctor` и
+`interfaces` и, следовательно, нельзя проводить поставочную проверку этих
+команд. Отметки ниже отражают именно фактический результат, а не намерение
+плана.
+
 ## Глобальные ограничения
 
 - Рабочая ветка — `dev`; `main` получает только проверенные рабочие версии с семантическим тегом.
@@ -36,7 +45,7 @@
 - Производит entry point `wispwire = "wispwire.cli:app"` и объект `app: typer.Typer`.
 - Потребляет Python 3.11+, Typer и Rich.
 
-- [ ] **Шаг 1: Написать падающий тест справки CLI**
+- [x] **Шаг 1: Написать падающий тест справки CLI**
 
 ```python
 from typer.testing import CliRunner
@@ -52,23 +61,23 @@ def test_cli_shows_russian_help() -> None:
     assert "диагностики" in result.stdout
 ```
 
-- [ ] **Шаг 2: Убедиться, что тест падает из-за отсутствия модуля**
+- [x] **Шаг 2: Убедиться, что тест падает из-за отсутствия модуля**
 
 Запустить: `python -m pytest tests/test_cli.py::test_cli_shows_russian_help -v`.
 
 Ожидаемый результат: `ModuleNotFoundError: No module named 'wispwire'`.
 
-- [ ] **Шаг 3: Реализовать минимальный пакет и конфигурацию**
+- [x] **Шаг 3: Реализовать минимальный пакет и конфигурацию**
 
 Создать `pyproject.toml` с build backend Hatchling, зависимостями `typer>=0.12,<1` и `rich>=13,<15`, группой `dev` для pytest, Ruff и mypy, `requires-python = ">=3.11"`, package-dir `src`, настройкой pytest `pythonpath = ["src"]` и console-script `wispwire = "wispwire.cli:app"`. В `cli.py` создать `app = typer.Typer(help="WispWire — терминальная утилита для диагностики сетевого анализа.")` и блок `if __name__ == "__main__": app()`. В README описать установку зависимостей и команды проверок.
 
-- [ ] **Шаг 4: Проверить зелёный тест и базовые проверки**
+- [x] **Шаг 4: Проверить зелёный тест и базовые проверки**
 
 Запустить: `python -m pytest tests/test_cli.py::test_cli_shows_russian_help -v`, затем `ruff check src tests`, `ruff format --check src tests` и `mypy src`.
 
 Ожидаемый результат: все команды завершаются успешно.
 
-- [ ] **Шаг 5: Закоммитить независимую задачу**
+- [x] **Шаг 5: Закоммитить независимую задачу**
 
 ```bash
 git add pyproject.toml README.md src/wispwire tests/test_cli.py
@@ -88,7 +97,7 @@ git commit -m "Добавить основу CLI WispWire"
 - Производит `inspect_tool(name: str, which: Callable[[str], str | None] = shutil.which, run: Callable[..., CompletedProcess[str]] = subprocess.run) -> ToolStatus`.
 - Потребляется `diagnostics.collect_doctor_report`.
 
-- [ ] **Шаг 1: Написать падающие тесты найденной и отсутствующей утилиты**
+- [x] **Шаг 1: Написать падающие тесты найденной и отсутствующей утилиты**
 
 ```python
 from pathlib import Path
@@ -111,23 +120,23 @@ def test_inspect_tool_reports_missing_program() -> None:
 
 Добавить `fake_version_run`, возвращающий `CompletedProcess(["tshark", "--version"], 0, "TShark (Wireshark) 4.4.0\n", "")`.
 
-- [ ] **Шаг 2: Проверить ожидаемое падение**
+- [x] **Шаг 2: Проверить ожидаемое падение**
 
 Запустить: `python -m pytest tests/test_wireshark.py -v`.
 
 Ожидаемый результат: ошибка импорта `wispwire.wireshark`.
 
-- [ ] **Шаг 3: Написать минимальную реализацию**
+- [x] **Шаг 3: Написать минимальную реализацию**
 
 Использовать `shutil.which`; версию запрашивать только как `[путь, "--version"]` с `capture_output=True`, `text=True`, `check=False`, `timeout=5`. Первую строку stdout разобрать регулярным выражением `([0-9]+(?:\.[0-9]+)+)`. При ненулевом коде, тайм-ауте или нераспознанной версии возвращать `error`, не выбрасывая исключение.
 
-- [ ] **Шаг 4: Проверить весь модуль**
+- [x] **Шаг 4: Проверить весь модуль**
 
 Запустить: `python -m pytest tests/test_wireshark.py -v`, `ruff check src tests`, `ruff format --check src tests`, `mypy src`.
 
 Ожидаемый результат: все команды успешны.
 
-- [ ] **Шаг 5: Закоммитить независимую задачу**
+- [x] **Шаг 5: Закоммитить независимую задачу**
 
 ```bash
 git add src/wispwire/wireshark.py tests/test_wireshark.py
@@ -149,7 +158,7 @@ git commit -m "Добавить проверку утилит Wireshark"
 - Производит `collect_doctor_report(...) -> DoctorReport` и `list_interfaces(...) -> tuple[str, ...]`.
 - Потребляется командами CLI в следующей задаче.
 
-- [ ] **Шаг 1: Написать падающие тесты отчёта и разбора интерфейсов**
+- [x] **Шаг 1: Написать падающие тесты отчёта и разбора интерфейсов**
 
 ```python
 from wispwire.diagnostics import collect_doctor_report, list_interfaces
@@ -165,23 +174,23 @@ def test_doctor_warns_when_capture_tools_are_missing() -> None:
     assert report.capture_warning == "live-захват недоступен: установите dumpcap"
 ```
 
-- [ ] **Шаг 2: Убедиться, что тесты падают**
+- [x] **Шаг 2: Убедиться, что тесты падают**
 
 Запустить: `python -m pytest tests/test_diagnostics.py -v`.
 
 Ожидаемый результат: ошибка импорта `wispwire.diagnostics`.
 
-- [ ] **Шаг 3: Реализовать чистый слой отчёта**
+- [x] **Шаг 3: Реализовать чистый слой отчёта**
 
 `list_interfaces` запускает только `[dumpcap_path, "-D"]`, не вызывает `sudo`, отбрасывает описания в скобках и возвращает пустой кортеж при ошибке. `collect_doctor_report` проверяет `tshark`, `dumpcap` и `mergecap`, получает интерфейсы лишь при найденном `dumpcap`, возвращает версии Python/WispWire и одно ясное предупреждение о невозможности live-захвата.
 
-- [ ] **Шаг 4: Проверить тесты и статический анализ**
+- [x] **Шаг 4: Проверить тесты и статический анализ**
 
 Запустить: `python -m pytest tests/test_diagnostics.py -v`, `ruff check src tests`, `ruff format --check src tests`, `mypy src`.
 
 Ожидаемый результат: все команды успешны.
 
-- [ ] **Шаг 5: Закоммитить независимую задачу**
+- [x] **Шаг 5: Закоммитить независимую задачу**
 
 ```bash
 git add src/wispwire/diagnostics.py src/wispwire/wireshark.py tests/test_diagnostics.py
