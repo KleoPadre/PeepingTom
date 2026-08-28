@@ -14,9 +14,8 @@ python3 -m venv .venv
 ## Проверки
 
 ```bash
-python -m pytest
-ruff check src tests
-ruff format --check src tests
-mypy src
+.venv/bin/python -m pytest
+.venv/bin/ruff check src tests
+.venv/bin/ruff format --check src tests
+.venv/bin/mypy src
 ```
-
