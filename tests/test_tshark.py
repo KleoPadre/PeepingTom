@@ -45,6 +45,89 @@ def test_read_packet_details_separates_tree_and_hex() -> None:
     ) == PacketDetails("Frame 7: 72 bytes", "0000  01 02 03 04   ....")
 
 
+def test_read_packet_details_rejects_non_positive_frame_without_running_tshark() -> (
+    None
+):
+    def unexpected_run(
+        *_args: object, **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        raise AssertionError("TShark не должен запускаться")
+
+    with pytest.raises(TsharkReadError, match="не меньше 1"):
+        read_packet_details(
+            Path("capture.pcapng"), Path("tshark"), 0, run=unexpected_run
+        )
+
+
+def test_read_packet_details_reports_tshark_startup_error() -> None:
+    def failing_run(
+        *_args: object, **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        raise OSError("Нет такого файла")
+
+    with pytest.raises(TsharkReadError, match="Не удалось запустить"):
+        read_packet_details(Path("capture.pcapng"), Path("tshark"), 7, run=failing_run)
+
+
+def test_read_packet_details_reports_stderr_for_nonzero_exit() -> None:
+    result = completed("", stderr="Файл повреждён\n", returncode=2)
+
+    with pytest.raises(TsharkReadError, match="Файл повреждён"):
+        read_packet_details(
+            Path("capture.pcapng"), Path("tshark"), 7, run=lambda *_a, **_k: result
+        )
+
+
+def test_read_packet_details_reports_empty_stdout() -> None:
+    with pytest.raises(TsharkReadError, match="пустой вывод"):
+        read_packet_details(
+            Path("capture.pcapng"),
+            Path("tshark"),
+            7,
+            run=lambda *_a, **_k: completed("\n"),
+        )
+
+
+def test_read_packet_details_reports_missing_hex_dump() -> None:
+    result = completed("Frame 7: 72 bytes\n\nEthernet II\n")
+
+    assert read_packet_details(
+        Path("capture.pcapng"), Path("tshark"), 7, run=lambda *_a, **_k: result
+    ) == PacketDetails(
+        "Frame 7: 72 bytes\n\nEthernet II", "Hex/ASCII-дамп отсутствует."
+    )
+
+
+def test_read_packet_details_uses_safe_tshark_run_options() -> None:
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def recording_run(
+        *args: object, **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append((args, kwargs))
+        return completed("Frame 7: 72 bytes\n")
+
+    read_packet_details(Path("capture.pcapng"), Path("tshark"), 7, run=recording_run)
+
+    assert calls == [
+        (
+            (
+                [
+                    "tshark",
+                    "-n",
+                    "-r",
+                    "capture.pcapng",
+                    "-Y",
+                    "frame.number == 7",
+                    "-V",
+                    "-x",
+                ],
+            ),
+            {"capture_output": True, "text": True, "check": False, "timeout": 5},
+        )
+    ]
+
+
 class FakeProcess:
     def __init__(
         self,
