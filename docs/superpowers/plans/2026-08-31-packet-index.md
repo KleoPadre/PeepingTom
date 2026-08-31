@@ -45,7 +45,7 @@
 - Производит: `SqliteFeatureStatus(available: bool, error: str | None)` и `check_fts5_trigram(connection_factory: Callable[[], sqlite3.Connection] | None = None) -> SqliteFeatureStatus`.
 - Потребители: `collect_doctor_report` и `PacketIndex` из следующих задач.
 
-- [ ] **Шаг 1: написать падающие тесты доступной и недоступной FTS5 trigram**
+- [x] **Шаг 1: написать падающие тесты доступной и недоступной FTS5 trigram**
 
 ```python
 def test_check_fts5_trigram_reports_available() -> None:
@@ -59,12 +59,12 @@ def test_check_fts5_trigram_returns_error_when_virtual_table_cannot_be_created()
     assert "trigram" in (status.error or "")
 ```
 
-- [ ] **Шаг 2: подтвердить падение тестов из-за отсутствующего модуля**
+- [x] **Шаг 2: подтвердить падение тестов из-за отсутствующего модуля**
 
 Запустить: `.venv/bin/python -m pytest tests/test_sqlite_support.py -v`  
 Ожидается: `ModuleNotFoundError: No module named 'wispwire.sqlite_support'`.
 
-- [ ] **Шаг 3: реализовать минимальную проверку**
+- [x] **Шаг 3: реализовать минимальную проверку**
 
 ```python
 @dataclass(frozen=True)
@@ -94,12 +94,12 @@ def check_fts5_trigram(
 текстом и исходной причиной. Тестовая фабрика возвращает соединение-обёртку,
 у которого `execute` поднимает `sqlite3.OperationalError`.
 
-- [ ] **Шаг 4: проверить модуль**
+- [x] **Шаг 4: проверить модуль**
 
 Запустить: `.venv/bin/python -m pytest tests/test_sqlite_support.py -v`  
 Ожидается: все тесты проходят.
 
-- [ ] **Шаг 5: закоммитить независимую задачу**
+- [x] **Шаг 5: закоммитить независимую задачу**
 
 ```bash
 git add src/wispwire/sqlite_support.py tests/test_sqlite_support.py
@@ -120,7 +120,7 @@ git commit -m "Добавить проверку SQLite FTS5"
 - `PacketIndex(path: Path, feature_check: Callable[[], SqliteFeatureStatus] = check_fts5_trigram)` создаёт схему только при доступной возможности.
 - `PacketIndex.append(records: Iterable[PacketRecord]) -> int` возвращает число записанных строк.
 
-- [ ] **Шаг 1: написать падающие тесты схемы, всех полей и одной транзакции**
+- [x] **Шаг 1: написать падающие тесты схемы, всех полей и одной транзакции**
 
 ```python
 def test_append_stores_every_packet_field(tmp_path: Path) -> None:
@@ -141,12 +141,12 @@ def test_append_rolls_back_the_whole_batch_on_constraint_error(tmp_path: Path) -
 Также написать тест, что `PacketIndex` поднимает `PacketIndexUnavailableError`
 и не создаёт файл, когда `feature_check` возвращает недоступный статус.
 
-- [ ] **Шаг 2: подтвердить ожидаемое падение**
+- [x] **Шаг 2: подтвердить ожидаемое падение**
 
 Запустить: `.venv/bin/python -m pytest tests/test_index.py -v`  
 Ожидается: ошибка импорта `wispwire.index`.
 
-- [ ] **Шаг 3: реализовать модели, схему и пакетную вставку**
+- [x] **Шаг 3: реализовать модели, схему и пакетную вставку**
 
 ```python
 @dataclass(frozen=True)
@@ -177,12 +177,12 @@ class PacketIndex:
 Схему создавать после успешной `feature_check`; при недоступности поднять
 `PacketIndexUnavailableError(status.error)` до открытия SQLite-файла.
 
-- [ ] **Шаг 4: проверить запись**
+- [x] **Шаг 4: проверить запись**
 
 Запустить: `.venv/bin/python -m pytest tests/test_index.py -v`  
 Ожидается: тесты хранения, rollback и недоступной FTS5 проходят.
 
-- [ ] **Шаг 5: закоммитить независимую задачу**
+- [x] **Шаг 5: закоммитить независимую задачу**
 
 ```bash
 git add src/wispwire/index.py tests/test_index.py
@@ -201,7 +201,7 @@ git commit -m "Добавить SQLite-индекс пакетов"
 - Потребляет: `PacketIndex`, `PacketRecord` и FTS5-схему из задачи 2.
 - Производит: `PacketCursor(global_number: int, row_id: int)`, `PacketPage(items: tuple[IndexedPacket, ...], next_cursor: PacketCursor | None)`, `PacketIndex.list_page(limit: int, after: PacketCursor | None = None) -> PacketPage` и `PacketIndex.search_info(query: str, limit: int, after: PacketCursor | None = None) -> PacketPage`.
 
-- [ ] **Шаг 1: написать падающие тесты страниц и поиска**
+- [x] **Шаг 1: написать падающие тесты страниц и поиска**
 
 ```python
 def test_list_page_does_not_duplicate_or_skip_when_new_packet_is_appended(tmp_path: Path) -> None:
@@ -221,12 +221,12 @@ def test_search_info_finds_casefolded_substring(tmp_path: Path) -> None:
 совпадений, кавычки в поисковом тексте и отдельной курсор-пагинации результатов
 поиска.
 
-- [ ] **Шаг 2: подтвердить ожидаемое падение**
+- [x] **Шаг 2: подтвердить ожидаемое падение**
 
 Запустить: `.venv/bin/python -m pytest tests/test_index.py -v`  
 Ожидается: отсутствуют `list_page` и `search_info` либо тесты не проходят.
 
-- [ ] **Шаг 3: реализовать выдачу и поиск**
+- [x] **Шаг 3: реализовать выдачу и поиск**
 
 ```python
 def list_page(self, limit: int, after: PacketCursor | None = None) -> PacketPage:
@@ -250,12 +250,12 @@ def search_info(self, query: str, limit: int, after: PacketCursor | None = None)
 поиск через параметр `MATCH`; экранировать двойные кавычки и оборачивать
 casefold-строку в FTS5 phrase, чтобы операторы FTS не меняли смысл ввода.
 
-- [ ] **Шаг 4: проверить функциональность индекса**
+- [x] **Шаг 4: проверить функциональность индекса**
 
 Запустить: `.venv/bin/python -m pytest tests/test_index.py -v`  
 Ожидается: все тесты индекса проходят.
 
-- [ ] **Шаг 5: закоммитить независимую задачу**
+- [x] **Шаг 5: закоммитить независимую задачу**
 
 ```bash
 git add src/wispwire/index.py tests/test_index.py
@@ -278,7 +278,7 @@ git commit -m "Добавить поиск и пагинацию пакетов"
 - Расширяет: `DoctorReport` полем `sqlite_fts5: SqliteFeatureStatus`.
 - Расширяет: `collect_doctor_report(..., sqlite_check: Callable[[], SqliteFeatureStatus] = check_fts5_trigram) -> DoctorReport`.
 
-- [ ] **Шаг 1: написать падающие тесты отчёта и CLI**
+- [x] **Шаг 1: написать падающие тесты отчёта и CLI**
 
 ```python
 def test_doctor_report_includes_unavailable_fts5_status() -> None:
@@ -294,12 +294,12 @@ def test_doctor_prints_fts5_warning(monkeypatch) -> None:
 
 Дополнить тест успешного отчёта проверкой `SqliteFeatureStatus(True, None)`.
 
-- [ ] **Шаг 2: подтвердить ожидаемое падение**
+- [x] **Шаг 2: подтвердить ожидаемое падение**
 
 Запустить: `.venv/bin/python -m pytest tests/test_diagnostics.py tests/test_cli_commands.py -v`  
 Ожидается: `DoctorReport` не содержит `sqlite_fts5`, а CLI не печатает статус.
 
-- [ ] **Шаг 3: реализовать отображение статуса**
+- [x] **Шаг 3: реализовать отображение статуса**
 
 ```python
 console.print(
@@ -313,12 +313,12 @@ if not report.sqlite_fts5.available:
 оставаться доступным, а недоступен только индекс/поиск. В README добавить,
 что `wispwire doctor` проверяет возможность поиска и как выглядит его ошибка.
 
-- [ ] **Шаг 4: проверить диагностику и справку**
+- [x] **Шаг 4: проверить диагностику и справку**
 
 Запустить: `.venv/bin/python -m pytest tests/test_diagnostics.py tests/test_cli_commands.py -v`  
 Ожидается: все тесты проходят.
 
-- [ ] **Шаг 5: закоммитить независимую задачу**
+- [x] **Шаг 5: закоммитить независимую задачу**
 
 ```bash
 git add src/wispwire/diagnostics.py src/wispwire/cli.py tests/test_diagnostics.py tests/test_cli_commands.py README.md
@@ -337,7 +337,7 @@ git commit -m "Добавить диагностику SQLite FTS5"
 - Потребляет: завершённые задачи 1–4.
 - Производит: подтверждённый статус этапа 3 и сохранённые результаты проверок в истории Git.
 
-- [ ] **Шаг 1: выполнить полный набор проверок**
+- [x] **Шаг 1: выполнить полный набор проверок**
 
 ```bash
 .venv/bin/python -m pytest
@@ -348,7 +348,7 @@ git commit -m "Добавить диагностику SQLite FTS5"
 
 Ожидается: каждая команда завершается с кодом 0.
 
-- [ ] **Шаг 2: вручную проверить отсутствие изменения команды `open`**
+- [x] **Шаг 2: вручную проверить отсутствие изменения команды `open`**
 
 ```bash
 .venv/bin/wispwire open --help
@@ -358,12 +358,12 @@ git diff 652a94f -- src/wispwire/cli.py
 Ожидается: у `open` нет новых аргументов индексации или поиска; изменения CLI
 касаются только вывода `doctor`.
 
-- [ ] **Шаг 3: отметить выполненные шаги и этап**
+- [x] **Шаг 3: отметить выполненные шаги и этап**
 
 Заменить все флажки задач 1–5 в этом плане на `[x]`. В общем плане поставить
 `[x]` у обоих пунктов этапа 3 и дописать хеши фактических коммитов задач.
 
-- [ ] **Шаг 4: проверить итоговый diff**
+- [x] **Шаг 4: проверить итоговый diff**
 
 ```bash
 git diff --check HEAD~1..HEAD
@@ -372,7 +372,7 @@ git status --short --branch
 
 Ожидается: нет ошибок whitespace; после коммита рабочее дерево чистое.
 
-- [ ] **Шаг 5: закоммитить статус этапа**
+- [x] **Шаг 5: закоммитить статус этапа**
 
 ```bash
 git add docs/superpowers/plans/2026-08-28-wispwire-tui.md docs/superpowers/plans/2026-08-31-packet-index.md
