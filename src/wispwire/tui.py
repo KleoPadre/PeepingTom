@@ -1,8 +1,7 @@
-"""Read-only TUI для просмотра сводок пакетов."""
+"""TUI только для чтения сводок пакетов."""
 
 from typing import ClassVar
 
-from rich.markup import escape
 from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
@@ -89,15 +88,15 @@ class WispWireApp(App[None]):
         if event.cursor_row < len(self._packets):
             self._show_details(self._packets[event.cursor_row])
 
-    def _row_values(self, packet: PacketSummary, wide: bool) -> tuple[str, ...]:
+    def _row_values(self, packet: PacketSummary, wide: bool) -> tuple[Text, ...]:
         values = (
-            escape(str(packet.number)),
-            escape(packet.relative_time),
-            escape(packet.source),
-            escape(packet.destination),
-            escape(packet.protocol),
-            escape(str(packet.length)),
-            escape(packet.info),
+            Text(str(packet.number)),
+            Text(packet.relative_time),
+            Text(packet.source),
+            Text(packet.destination),
+            Text(packet.protocol),
+            Text(str(packet.length)),
+            Text(packet.info),
         )
         if wide:
             return values

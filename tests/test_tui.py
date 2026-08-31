@@ -5,7 +5,7 @@ from wispwire.packets import PacketSummary
 from wispwire.tui import WispWireApp
 
 
-def packet(number: int, protocol: str = "DNS") -> PacketSummary:
+def packet(number: int, protocol: str = "DNS", info: str = "Запрос") -> PacketSummary:
     return PacketSummary(
         number=number,
         relative_time="0.000000",
@@ -13,7 +13,7 @@ def packet(number: int, protocol: str = "DNS") -> PacketSummary:
         destination="10.0.0.2",
         protocol=protocol,
         length=72,
-        info="Запрос",
+        info=info,
     )
 
 
@@ -22,7 +22,9 @@ async def test_app_shows_packet_fields_and_selected_details() -> None:
     app = WispWireApp((packet(number=7, protocol="UDP"),), "sample.pcapng")
 
     async with app.run_test():
-        assert "UDP" in app.query_one("#packets", DataTable).get_row_at(0)
+        assert "UDP" in [
+            str(value) for value in app.query_one("#packets", DataTable).get_row_at(0)
+        ]
         assert "No.: 7" in app.query_one("#details", Static).renderable
 
 
@@ -34,6 +36,16 @@ async def test_app_moves_selection_with_down_key() -> None:
         await pilot.press("down")
 
         assert "No.: 2" in app.query_one("#details", Static).renderable
+
+
+@pytest.mark.asyncio
+async def test_app_shows_rich_markup_in_packet_info_literally() -> None:
+    app = WispWireApp((packet(number=1, info="[bold]Текст[/bold]"),), "sample.pcapng")
+
+    async with app.run_test():
+        table = app.query_one("#packets", DataTable)
+
+        assert str(table.get_row_at(0)[-1]) == "[bold]Текст[/bold]"
 
 
 @pytest.mark.asyncio
@@ -71,8 +83,18 @@ async def test_resize_keeps_selected_packet_details_and_rows() -> None:
 
         assert table.cursor_row == 1
         assert table.row_count == 2
-        assert table.get_row_at(0) == ["1", "10.0.0.1", "DNS", "Запрос"]
-        assert table.get_row_at(1) == ["2", "10.0.0.1", "DNS", "Запрос"]
+        assert [str(value) for value in table.get_row_at(0)] == [
+            "1",
+            "10.0.0.1",
+            "DNS",
+            "Запрос",
+        ]
+        assert [str(value) for value in table.get_row_at(1)] == [
+            "2",
+            "10.0.0.1",
+            "DNS",
+            "Запрос",
+        ]
         assert "No.: 2" in app.query_one("#details", Static).renderable
 
 
