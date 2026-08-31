@@ -34,3 +34,26 @@ async def test_app_moves_selection_with_down_key() -> None:
         await pilot.press("down")
 
         assert "No.: 2" in app.query_one("#details", Static).renderable
+
+
+@pytest.mark.asyncio
+async def test_app_shows_minimum_size_warning_below_80x24() -> None:
+    app = WispWireApp((packet(number=1),), "sample.pcapng")
+
+    async with app.run_test(size=(79, 23)):
+        assert app.query_one("#size-warning", Static).display is True
+
+
+@pytest.mark.asyncio
+async def test_narrow_layout_keeps_number_protocol_and_info_columns() -> None:
+    app = WispWireApp((packet(number=1),), "sample.pcapng")
+
+    async with app.run_test(size=(100, 30)):
+        table = app.query_one("#packets", DataTable)
+
+        assert [str(column.label) for column in table.ordered_columns] == [
+            "No.",
+            "Source",
+            "Protocol",
+            "Info",
+        ]

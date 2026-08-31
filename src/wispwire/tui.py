@@ -4,6 +4,7 @@ from typing import ClassVar
 
 from rich.markup import escape
 from rich.text import Text
+from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import BindingType
 from textual.containers import Container
@@ -20,6 +21,9 @@ class WispWireApp(App[None]):
     #layout.narrow { layout: vertical; }
     #packets { width: 2fr; }
     #details { width: 1fr; }
+    #layout.narrow #packets { width: 1fr; }
+    #layout.narrow #details { width: 1fr; }
+    #size-warning { display: none; }
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -35,6 +39,7 @@ class WispWireApp(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
+        yield Static("Минимальный размер терминала — 80×24.", id="size-warning")
         with Container(id="layout"):
             yield DataTable(id="packets")
             yield Static(id="details")
@@ -43,21 +48,49 @@ class WispWireApp(App[None]):
     def on_mount(self) -> None:
         table = self.query_one("#packets", DataTable)
         table.cursor_type = "row"
-        table.add_columns(
-            "No.", "Time", "Source", "Destination", "Protocol", "Length", "Info"
-        )
-        for packet in self._packets:
-            table.add_row(*self._row_values(packet))
         table.focus()
+        self._update_layout(self.size.width, self.size.height)
         if self._packets:
             self._show_details(self._packets[0])
+
+    def on_resize(self, event: events.Resize) -> None:
+        self._update_layout(event.size.width, event.size.height)
+
+    def _update_layout(self, width: int, height: int) -> None:
+        self.query_one("#size-warning", Static).display = width < 80 or height < 24
+        self._set_table_width(width >= 120)
+
+    def _set_table_width(self, wide: bool) -> None:
+        self.query_one("#layout").set_class(not wide, "narrow")
+        self._rebuild_table(wide)
+
+    def _rebuild_table(self, wide: bool) -> None:
+        table = self.query_one("#packets", DataTable)
+        selected_row = table.cursor_row
+        table.clear(columns=True)
+        if wide:
+            table.add_columns(
+                "No.",
+                "Time",
+                "Source",
+                "Destination",
+                "Protocol",
+                "Length",
+                "Info",
+            )
+        else:
+            table.add_columns("No.", "Source", "Protocol", "Info")
+        for packet in self._packets:
+            table.add_row(*self._row_values(packet, wide))
+        if self._packets:
+            table.move_cursor(row=min(selected_row, len(self._packets) - 1), column=0)
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if event.cursor_row < len(self._packets):
             self._show_details(self._packets[event.cursor_row])
 
-    def _row_values(self, packet: PacketSummary) -> tuple[str, ...]:
-        return (
+    def _row_values(self, packet: PacketSummary, wide: bool) -> tuple[str, ...]:
+        values = (
             escape(str(packet.number)),
             escape(packet.relative_time),
             escape(packet.source),
@@ -66,6 +99,9 @@ class WispWireApp(App[None]):
             escape(str(packet.length)),
             escape(packet.info),
         )
+        if wide:
+            return values
+        return values[0], values[2], values[4], values[6]
 
     def _show_details(self, packet: PacketSummary) -> None:
         details = "\n".join(
