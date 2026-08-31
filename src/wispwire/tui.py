@@ -1,5 +1,6 @@
 """TUI только для чтения сводок пакетов."""
 
+from collections.abc import Callable
 from typing import ClassVar
 
 from rich.text import Text
@@ -9,7 +10,8 @@ from textual.binding import BindingType
 from textual.containers import Container
 from textual.widgets import DataTable, Footer, Header, Static
 
-from wispwire.packets import PacketSummary
+from wispwire.packets import PacketDetails, PacketSummary
+from wispwire.tshark import TsharkReadError
 
 
 class WispWireApp(App[None]):
@@ -30,10 +32,16 @@ class WispWireApp(App[None]):
         ("tab", "focus_next", "Сменить фокус"),
     ]
 
-    def __init__(self, packets: tuple[PacketSummary, ...], source_name: str) -> None:
+    def __init__(
+        self,
+        packets: tuple[PacketSummary, ...],
+        source_name: str,
+        read_details: Callable[[PacketSummary], PacketDetails],
+    ) -> None:
         super().__init__()
         self._packets = packets
         self._source_name = source_name
+        self._read_details = read_details
         self.title = f"WispWire — {source_name}"
 
     def compose(self) -> ComposeResult:
@@ -103,15 +111,27 @@ class WispWireApp(App[None]):
         return values[0], values[2], values[4], values[6]
 
     def _show_details(self, packet: PacketSummary) -> None:
-        details = "\n".join(
-            (
-                f"No.: {packet.number}",
-                f"Time: {packet.relative_time}",
-                f"Source: {packet.source}",
-                f"Destination: {packet.destination}",
-                f"Protocol: {packet.protocol}",
-                f"Length: {packet.length}",
-                f"Info: {packet.info}",
-            )
+        summary = (
+            f"No.: {packet.number}",
+            f"Time: {packet.relative_time}",
+            f"Source: {packet.source}",
+            f"Destination: {packet.destination}",
+            f"Protocol: {packet.protocol}",
+            f"Length: {packet.length}",
+            f"Info: {packet.info}",
         )
-        self.query_one("#details", Static).update(Text(details))
+        try:
+            packet_details = self._read_details(packet)
+        except (TsharkReadError, OSError) as error:
+            details = (*summary, "", f"Не удалось загрузить детали: {error}")
+        else:
+            details = (
+                *summary,
+                "",
+                "Дерево протоколов:",
+                packet_details.protocol_tree,
+                "",
+                "Hex/ASCII:",
+                packet_details.hex_ascii,
+            )
+        self.query_one("#details", Static).update(Text("\n".join(details)))
