@@ -82,6 +82,21 @@ async def test_app_keeps_running_and_shows_local_details_error() -> None:
 
 
 @pytest.mark.asyncio
+async def test_app_keeps_running_and_shows_local_os_error() -> None:
+    def read_details(_: PacketSummary) -> PacketDetails:
+        raise OSError("Нет доступа к TShark")
+
+    app = WispWireApp((packet(1),), "sample.pcapng", read_details)
+
+    async with app.run_test():
+        assert app.is_running
+        assert (
+            "Не удалось загрузить детали: Нет доступа к TShark"
+            in app.query_one("#details", Static).renderable
+        )
+
+
+@pytest.mark.asyncio
 async def test_app_moves_selection_with_down_key() -> None:
     app = WispWireApp(
         (packet(number=1), packet(number=2)), "sample.pcapng", read_details
