@@ -3,10 +3,10 @@ from pathlib import Path
 import typer
 from rich.console import Console
 from rich.table import Table
-from rich.text import Text
 
 from wispwire.diagnostics import collect_doctor_report, list_interfaces
 from wispwire.tshark import TsharkReadError, iter_packet_summaries
+from wispwire.tui import WispWireApp
 from wispwire.wireshark import inspect_tool
 
 app = typer.Typer(
@@ -83,43 +83,17 @@ def open(
         console.print("TShark недоступен. Запустите `wispwire doctor` для проверки.")
         raise typer.Exit(code=1)
 
-    packets_table = Table()
-    packets_table.add_column("No.")
-    packets_table.add_column("Time")
-    packets_table.add_column("Source")
-    packets_table.add_column("Destination")
-    packets_table.add_column("Protocol")
-    packets_table.add_column("Length")
-    packets_table.add_column("Info")
-
-    packet_found = False
     try:
-        for packet in iter_packet_summaries(capture_path, status.path, limit):
-            packet_found = True
-            packets_table.add_row(
-                _literal_text(packet.number),
-                _literal_text(packet.relative_time),
-                _literal_text(packet.source),
-                _literal_text(packet.destination),
-                _literal_text(packet.protocol),
-                _literal_text(packet.length),
-                _literal_text(packet.info),
-            )
+        packets = tuple(iter_packet_summaries(capture_path, status.path, limit))
     except TsharkReadError as error:
-        if packet_found:
-            console.print(packets_table)
         console.print(f"Не удалось прочитать захват: {error}")
         raise typer.Exit(code=1) from None
 
-    if packet_found:
-        console.print(packets_table)
+    if not packets:
+        console.print("Пакеты не найдены.")
         return
 
-    console.print("Пакеты не найдены.")
-
-
-def _literal_text(value: object) -> Text:
-    return Text(str(value))
+    WispWireApp(packets, capture_path.name).run()
 
 
 def _print_interfaces(interfaces: tuple[str, ...]) -> None:
