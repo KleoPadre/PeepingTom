@@ -53,10 +53,11 @@ INSERT INTO packets (global_number, segment_id, segment_frame_number, captured_a
 relative_time, source, destination, protocol, length, info, info_casefold)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
-SELECT_PACKETS_SQL = """
-SELECT rowid AS row_id, global_number, segment_id, segment_frame_number,
-captured_at, relative_time, source, destination, protocol, length, info,
-info_casefold FROM packets ORDER BY global_number ASC, rowid ASC LIMIT ?
+SELECT_PACKET_COLUMNS_SQL = """
+SELECT packets.rowid AS row_id, packets.global_number, packets.segment_id,
+packets.segment_frame_number, packets.captured_at, packets.relative_time,
+packets.source, packets.destination, packets.protocol, packets.length,
+packets.info, packets.info_casefold
 """
 
 
@@ -138,11 +139,34 @@ class PacketIndex:
             self._connection.executemany(INSERT_PACKET_SQL, rows)
         return len(rows)
 
-    def list_page(self, limit: int) -> PacketPage:
-        """Вернуть начальную страницу пакетов в стабильном порядке."""
+    def list_page(self, limit: int, after: PacketCursor | None = None) -> PacketPage:
+        """Вернуть страницу пакетов в стабильном порядке."""
         _validate_limit(limit)
-        rows = self._connection.execute(SELECT_PACKETS_SQL, (limit,)).fetchall()
-        return PacketPage(tuple(_packet_from_row(row) for row in rows), None)
+        cursor_sql, cursor_parameters = _cursor_clause(after)
+        rows = self._connection.execute(
+            f"{SELECT_PACKET_COLUMNS_SQL} FROM packets {cursor_sql} "
+            "ORDER BY packets.global_number ASC, packets.rowid ASC LIMIT ?",
+            (*cursor_parameters, limit + 1),
+        ).fetchall()
+        return _page_from_rows(rows, limit)
+
+    def search_info(
+        self, query: str, limit: int, after: PacketCursor | None = None
+    ) -> PacketPage:
+        """Найти подстроку в ``Info`` без учёта регистра."""
+        _validate_limit(limit)
+        if not query:
+            raise ValueError("Поисковый запрос не может быть пустым")
+
+        cursor_sql, cursor_parameters = _cursor_clause(after, prefix="AND")
+        rows = self._connection.execute(
+            f"{SELECT_PACKET_COLUMNS_SQL} FROM packet_info_search "
+            "JOIN packets ON packets.rowid = packet_info_search.rowid "
+            f"WHERE packet_info_search MATCH ? {cursor_sql} "
+            "ORDER BY packets.global_number ASC, packets.rowid ASC LIMIT ?",
+            (_fts_phrase(query), *cursor_parameters, limit + 1),
+        ).fetchall()
+        return _page_from_rows(rows, limit)
 
     def close(self) -> None:
         """Закрыть SQLite-соединение с индексом."""
@@ -188,6 +212,35 @@ def _packet_from_row(row: sqlite3.Row) -> IndexedPacket:
         info=row["info"],
         info_casefold=row["info_casefold"],
     )
+
+
+def _page_from_rows(rows: list[sqlite3.Row], limit: int) -> PacketPage:
+    page_rows = rows[:limit]
+    items = tuple(_packet_from_row(row) for row in page_rows)
+    next_cursor = None
+    if len(rows) > limit and items:
+        last_packet = items[-1]
+        next_cursor = PacketCursor(last_packet.global_number, last_packet.row_id)
+    return PacketPage(items, next_cursor)
+
+
+def _cursor_clause(
+    after: PacketCursor | None, prefix: str = "WHERE"
+) -> tuple[str, tuple[int, ...]]:
+    if after is None:
+        return "", ()
+    return (
+        (
+            f"{prefix} (packets.global_number > ? OR "
+            "(packets.global_number = ? AND packets.rowid > ?))"
+        ),
+        (after.global_number, after.global_number, after.row_id),
+    )
+
+
+def _fts_phrase(query: str) -> str:
+    escaped_query = query.casefold().replace('"', '""')
+    return f'"{escaped_query}"'
 
 
 def _validate_limit(limit: int) -> None:

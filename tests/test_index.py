@@ -69,3 +69,68 @@ def test_packet_index_does_not_create_file_without_fts5_trigram(tmp_path: Path) 
         )
 
     assert index_path.exists() is False
+
+
+def test_list_page_does_not_duplicate_or_skip_when_new_packet_is_appended(
+    tmp_path: Path,
+) -> None:
+    index = PacketIndex(tmp_path / "packets.sqlite3")
+    index.append([record(1), record(2), record(3)])
+
+    first_page = index.list_page(limit=2)
+    index.append([record(4)])
+    second_page = index.list_page(limit=2, after=first_page.next_cursor)
+
+    assert [packet.global_number for packet in first_page.items] == [1, 2]
+    assert [packet.global_number for packet in second_page.items] == [3, 4]
+
+
+def test_search_info_finds_casefolded_substring(tmp_path: Path) -> None:
+    index = PacketIndex(tmp_path / "packets.sqlite3")
+    index.append([record(1, info="Запрос TeLeGrAm API"), record(2, info="DNS")])
+
+    page = index.search_info("telegram", limit=10)
+
+    assert [packet.global_number for packet in page.items] == [1]
+
+
+def test_search_info_treats_quotation_mark_as_literal_text(tmp_path: Path) -> None:
+    index = PacketIndex(tmp_path / "packets.sqlite3")
+    index.append([record(1, info='Поле "значение"'), record(2, info="Другое")])
+
+    page = index.search_info('"значение"', limit=10)
+
+    assert [packet.global_number for packet in page.items] == [1]
+
+
+def test_search_info_paginates_matches_with_cursor(tmp_path: Path) -> None:
+    index = PacketIndex(tmp_path / "packets.sqlite3")
+    index.append(
+        [
+            record(1, info="telegram one"),
+            record(2, info="telegram two"),
+            record(3, info="telegram three"),
+        ]
+    )
+
+    first_page = index.search_info("telegram", limit=2)
+    second_page = index.search_info("telegram", limit=2, after=first_page.next_cursor)
+
+    assert [packet.global_number for packet in first_page.items] == [1, 2]
+    assert [packet.global_number for packet in second_page.items] == [3]
+    assert second_page.next_cursor is None
+
+
+@pytest.mark.parametrize("limit", [0, -1])
+def test_list_page_rejects_non_positive_limit(tmp_path: Path, limit: int) -> None:
+    index = PacketIndex(tmp_path / "packets.sqlite3")
+
+    with pytest.raises(ValueError, match="Размер страницы"):
+        index.list_page(limit=limit)
+
+
+def test_search_info_rejects_empty_query(tmp_path: Path) -> None:
+    index = PacketIndex(tmp_path / "packets.sqlite3")
+
+    with pytest.raises(ValueError, match="Поисковый запрос"):
+        index.search_info("", limit=10)
