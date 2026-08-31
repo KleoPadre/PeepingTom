@@ -1,8 +1,11 @@
+import subprocess
+from pathlib import Path
+
 import pytest
 from textual.widgets import DataTable, Static
 
 from wispwire.packets import PacketDetails, PacketSummary
-from wispwire.tshark import TsharkReadError
+from wispwire.tshark import TsharkReadError, read_packet_details
 from wispwire.tui import WispWireApp
 
 
@@ -22,6 +25,10 @@ def read_details(_: PacketSummary) -> PacketDetails:
     return PacketDetails("Frame", "0000  aa")
 
 
+def details_text(app: WispWireApp) -> str:
+    return str(app.query_one("#details-content", Static).renderable)
+
+
 @pytest.mark.asyncio
 async def test_app_shows_packet_fields_and_selected_details() -> None:
     app = WispWireApp(
@@ -32,7 +39,7 @@ async def test_app_shows_packet_fields_and_selected_details() -> None:
         assert "UDP" in [
             str(value) for value in app.query_one("#packets", DataTable).get_row_at(0)
         ]
-        assert "No.: 7" in app.query_one("#details", Static).renderable
+        assert "No.: 7" in details_text(app)
 
 
 @pytest.mark.asyncio
@@ -44,7 +51,7 @@ async def test_app_shows_tree_and_hex_for_selected_packet() -> None:
     )
 
     async with app.run_test():
-        text = app.query_one("#details", Static).renderable
+        text = details_text(app)
 
         assert "Дерево протоколов:\nFrame 7" in text
         assert "Hex/ASCII:\n0000  aa" in text
@@ -61,9 +68,27 @@ async def test_app_loads_details_for_newly_selected_packet() -> None:
     app = WispWireApp((packet(1), packet(2)), "sample.pcapng", read_details)
 
     async with app.run_test() as pilot:
+        await pilot.pause()
+        calls_before_selection = len(read_numbers)
         await pilot.press("down")
 
-        assert read_numbers[-1] == 2
+        assert read_numbers[calls_before_selection:] == [2]
+
+
+@pytest.mark.asyncio
+async def test_app_reads_initial_packet_no_more_than_once() -> None:
+    read_numbers: list[int] = []
+
+    def read_details(selected_packet: PacketSummary) -> PacketDetails:
+        read_numbers.append(selected_packet.number)
+        return PacketDetails(f"Frame {selected_packet.number}", "0000  aa")
+
+    app = WispWireApp((packet(1),), "sample.pcapng", read_details)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+
+        assert read_numbers == [1]
 
 
 @pytest.mark.asyncio
@@ -75,10 +100,7 @@ async def test_app_keeps_running_and_shows_local_details_error() -> None:
 
     async with app.run_test():
         assert app.is_running
-        assert (
-            "Не удалось загрузить детали: Повреждённый захват"
-            in app.query_one("#details", Static).renderable
-        )
+        assert "Не удалось загрузить детали: Повреждённый захват" in details_text(app)
 
 
 @pytest.mark.asyncio
@@ -90,10 +112,26 @@ async def test_app_keeps_running_and_shows_local_os_error() -> None:
 
     async with app.run_test():
         assert app.is_running
-        assert (
-            "Не удалось загрузить детали: Нет доступа к TShark"
-            in app.query_one("#details", Static).renderable
+        assert "Не удалось загрузить детали: Нет доступа к TShark" in details_text(app)
+
+
+@pytest.mark.asyncio
+async def test_app_keeps_running_when_details_reader_times_out() -> None:
+    def timing_out_run(
+        *_args: object, **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(["tshark"], timeout=5)
+
+    def read_details(_: PacketSummary) -> PacketDetails:
+        return read_packet_details(
+            Path("capture.pcapng"), Path("tshark"), 1, run=timing_out_run
         )
+
+    app = WispWireApp((packet(1),), "sample.pcapng", read_details)
+
+    async with app.run_test():
+        assert app.is_running
+        assert "Не удалось загрузить детали: Время ожидания" in details_text(app)
 
 
 @pytest.mark.asyncio
@@ -105,7 +143,7 @@ async def test_app_moves_selection_with_down_key() -> None:
     async with app.run_test() as pilot:
         await pilot.press("down")
 
-        assert "No.: 2" in app.query_one("#details", Static).renderable
+        assert "No.: 2" in details_text(app)
 
 
 @pytest.mark.asyncio
@@ -169,7 +207,7 @@ async def test_resize_keeps_selected_packet_details_and_rows() -> None:
             "DNS",
             "Запрос",
         ]
-        assert "No.: 2" in app.query_one("#details", Static).renderable
+        assert "No.: 2" in details_text(app)
 
 
 @pytest.mark.asyncio
@@ -195,3 +233,27 @@ async def test_layout_uses_expected_columns_at_width_boundaries(
         assert [
             str(column.label) for column in table.ordered_columns
         ] == expected_columns
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(120, 24), (80, 24)])
+async def test_app_focuses_details_and_scrolls_to_the_end(
+    size: tuple[int, int],
+) -> None:
+    long_tree = "\n".join(f"Протокол {number}" for number in range(80))
+    long_hex = "\n".join(f"{number:04x}  aa bb cc dd" for number in range(80))
+    app = WispWireApp(
+        (packet(1),),
+        "sample.pcapng",
+        lambda _: PacketDetails(long_tree, long_hex),
+    )
+
+    async with app.run_test(size=size) as pilot:
+        details = app.query_one("#details")
+
+        assert details.can_focus
+        await pilot.press("tab", "end")
+
+        assert app.focused is details
+        assert details.max_scroll_y > 0
+        assert details.scroll_y == details.max_scroll_y

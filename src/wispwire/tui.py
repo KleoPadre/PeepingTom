@@ -7,7 +7,7 @@ from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import BindingType
-from textual.containers import Container
+from textual.containers import Container, VerticalScroll
 from textual.widgets import DataTable, Footer, Header, Static
 
 from wispwire.packets import PacketDetails, PacketSummary
@@ -42,6 +42,7 @@ class WispWireApp(App[None]):
         self._packets = packets
         self._source_name = source_name
         self._read_details = read_details
+        self._details_packet_number: int | None = None
         self.title = f"WispWire — {source_name}"
 
     def compose(self) -> ComposeResult:
@@ -49,7 +50,8 @@ class WispWireApp(App[None]):
         yield Static("Минимальный размер терминала — 80×24.", id="size-warning")
         with Container(id="layout"):
             yield DataTable(id="packets")
-            yield Static(id="details")
+            with VerticalScroll(id="details"):
+                yield Static(id="details-content")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -111,6 +113,10 @@ class WispWireApp(App[None]):
         return values[0], values[2], values[4], values[6]
 
     def _show_details(self, packet: PacketSummary) -> None:
+        if self._details_packet_number == packet.number:
+            return
+        self._details_packet_number = packet.number
+
         summary = (
             f"No.: {packet.number}",
             f"Time: {packet.relative_time}",
@@ -135,4 +141,4 @@ class WispWireApp(App[None]):
                 "Hex/ASCII:",
                 packet_details.hex_ascii,
             )
-        self.query_one("#details", Static).update(Text("\n".join(details)))
+        self.query_one("#details-content", Static).update(Text("\n".join(details)))

@@ -44,6 +44,8 @@ def read_packet_details(
             check=False,
             timeout=5,
         )
+    except subprocess.TimeoutExpired as error:
+        raise TsharkReadError("Время ожидания ответа TShark истекло.") from error
     except OSError as error:
         raise TsharkReadError(f"Не удалось запустить TShark: {error}") from error
 

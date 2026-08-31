@@ -69,6 +69,18 @@ def test_read_packet_details_reports_tshark_startup_error() -> None:
         read_packet_details(Path("capture.pcapng"), Path("tshark"), 7, run=failing_run)
 
 
+def test_read_packet_details_reports_timeout_in_russian() -> None:
+    def timing_out_run(
+        *_args: object, **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(["tshark"], timeout=5)
+
+    with pytest.raises(TsharkReadError, match="Время ожидания"):
+        read_packet_details(
+            Path("capture.pcapng"), Path("tshark"), 7, run=timing_out_run
+        )
+
+
 def test_read_packet_details_reports_stderr_for_nonzero_exit() -> None:
     result = completed("", stderr="Файл повреждён\n", returncode=2)
 
