@@ -5,7 +5,8 @@ from rich.console import Console
 from rich.table import Table
 
 from wispwire.diagnostics import collect_doctor_report, list_interfaces
-from wispwire.tshark import TsharkReadError, iter_packet_summaries
+from wispwire.packets import PacketDetails, PacketSummary
+from wispwire.tshark import TsharkReadError, iter_packet_summaries, read_packet_details
 from wispwire.tui import WispWireApp
 from wispwire.wireshark import inspect_tool
 
@@ -82,9 +83,10 @@ def open(
     if status.path is None:
         console.print("TShark недоступен. Запустите `wispwire doctor` для проверки.")
         raise typer.Exit(code=1)
+    tshark_path = status.path
 
     try:
-        packets = tuple(iter_packet_summaries(capture_path, status.path, limit))
+        packets = tuple(iter_packet_summaries(capture_path, tshark_path, limit))
     except TsharkReadError as error:
         console.print(f"Не удалось прочитать захват: {error}")
         raise typer.Exit(code=1) from None
@@ -93,7 +95,10 @@ def open(
         console.print("Пакеты не найдены.")
         return
 
-    WispWireApp(packets, capture_path.name).run()
+    def read_details(packet: PacketSummary) -> PacketDetails:
+        return read_packet_details(capture_path, tshark_path, packet.number)
+
+    WispWireApp(packets, capture_path.name, read_details).run()
 
 
 def _print_interfaces(interfaces: tuple[str, ...]) -> None:

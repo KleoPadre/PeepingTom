@@ -5,7 +5,7 @@ from typer.testing import CliRunner
 
 from wispwire.cli import app
 from wispwire.diagnostics import DoctorReport
-from wispwire.packets import PacketSummary
+from wispwire.packets import PacketDetails, PacketSummary
 from wispwire.sqlite_support import SqliteFeatureStatus
 from wispwire.tshark import TsharkReadError
 from wispwire.wireshark import ToolStatus
@@ -92,7 +92,10 @@ def packet() -> PacketSummary:
 def fake_app(started: list[tuple[tuple[PacketSummary, ...], str]]):
     class FakeApp:
         def __init__(
-            self, packets: tuple[PacketSummary, ...], source_name: str
+            self,
+            packets: tuple[PacketSummary, ...],
+            source_name: str,
+            _read_details,
         ) -> None:
             self.packets = packets
             self.source_name = source_name
@@ -101,6 +104,48 @@ def fake_app(started: list[tuple[tuple[PacketSummary, ...], str]]):
             started.append((self.packets, self.source_name))
 
     return FakeApp
+
+
+def test_open_passes_capture_to_packet_details_reader(monkeypatch, tmp_path) -> None:
+    capture_path = tmp_path / "capture.pcapng"
+    capture_path.touch()
+    read_details_calls: list[tuple[Path, Path, int]] = []
+
+    class FakeApp:
+        def __init__(
+            self,
+            packets: tuple[PacketSummary, ...],
+            _source_name: str,
+            read_details,
+        ) -> None:
+            self._packets = packets
+            self._read_details = read_details
+
+        def run(self) -> None:
+            self._read_details(self._packets[0])
+
+    def fake_read_packet_details(
+        received_capture_path: Path,
+        tshark_path: Path,
+        frame_number: int,
+    ) -> PacketDetails:
+        read_details_calls.append((received_capture_path, tshark_path, frame_number))
+        return PacketDetails("Frame 1", "0000  aa")
+
+    monkeypatch.setattr(
+        "wispwire.cli.inspect_tool",
+        lambda _: ToolStatus("tshark", Path("/usr/bin/tshark"), "4.4.0", None),
+    )
+    monkeypatch.setattr(
+        "wispwire.cli.iter_packet_summaries", lambda *_: iter([packet()])
+    )
+    monkeypatch.setattr("wispwire.cli.read_packet_details", fake_read_packet_details)
+    monkeypatch.setattr("wispwire.cli.WispWireApp", FakeApp)
+
+    result = CliRunner().invoke(app, ["open", str(capture_path)])
+
+    assert result.exit_code == 0
+    assert read_details_calls == [(capture_path, Path("/usr/bin/tshark"), 1)]
 
 
 def test_open_starts_tui_with_read_only_packet_summaries(monkeypatch, tmp_path) -> None:

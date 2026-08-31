@@ -28,7 +28,7 @@
 
 **Interfaces:** Produces `PacketDetails(protocol_tree: str, hex_ascii: str)`, `build_details_command(tshark_path: Path, capture_path: Path, frame_number: int) -> list[str]` и `read_packet_details(capture_path: Path, tshark_path: Path, frame_number: int, run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run) -> PacketDetails`.
 
-- [ ] **Step 1: написать падающие тесты**
+- [x] **Step 1: написать падающие тесты**
 
 ```python
 def test_build_details_command_reads_only_selected_frame() -> None:
@@ -41,9 +41,9 @@ def test_read_packet_details_separates_tree_and_hex() -> None:
     assert read_packet_details(Path("capture.pcapng"), Path("tshark"), 7, run=lambda *_a, **_k: result) == PacketDetails("Frame 7: 72 bytes", "0000  01 02 03 04   ....")
 ```
 
-- [ ] **Step 2: подтвердить Red-цикл** — `.venv/bin/python -m pytest tests/test_tshark.py -v` должен завершиться FAIL: новых функций ещё нет.
+- [x] **Step 2: подтвердить Red-цикл** — `.venv/bin/python -m pytest tests/test_tshark.py -v` должен завершиться FAIL: новых функций ещё нет.
 
-- [ ] **Step 3: написать минимальную реализацию**
+- [x] **Step 3: написать минимальную реализацию**
 
 ```python
 @dataclass(frozen=True)
@@ -57,9 +57,9 @@ def build_details_command(tshark_path: Path, capture_path: Path, frame_number: i
 
 `read_packet_details` отклоняет номер меньше 1 через `TsharkReadError`, вызывает `run(capture_output=True, text=True, check=False, timeout=5)`, передаёт stderr при ненулевом коде, сообщает по-русски о пустом выводе. Он делит stdout по первой строке с четырьмя шестнадцатеричными цифрами и двумя пробелами; если её нет, возвращает весь stdout как дерево и «Hex/ASCII-дамп отсутствует.».
 
-- [ ] **Step 4: подтвердить Green-цикл** — `.venv/bin/python -m pytest tests/test_tshark.py -v` должен завершиться PASS.
+- [x] **Step 4: подтвердить Green-цикл** — `.venv/bin/python -m pytest tests/test_tshark.py -v` должен завершиться PASS.
 
-- [ ] **Step 5: закоммитить** с сообщением `Добавить чтение деталей кадра`.
+- [x] **Step 5: закоммитить** с сообщением `Добавить чтение деталей кадра`.
 
 ### Task 2: детали выбранного пакета в TUI
 
@@ -70,7 +70,7 @@ def build_details_command(tshark_path: Path, capture_path: Path, frame_number: i
 
 **Interfaces:** Consumes `PacketDetails` и `read_details: Callable[[PacketSummary], PacketDetails]`. Produces `WispWireApp(packets: tuple[PacketSummary, ...], source_name: str, read_details: Callable[[PacketSummary], PacketDetails])`.
 
-- [ ] **Step 1: написать падающие тесты**
+- [x] **Step 1: написать падающие тесты**
 
 ```python
 @pytest.mark.asyncio
@@ -82,13 +82,13 @@ async def test_app_shows_tree_and_hex_for_selected_packet() -> None:
         assert "Hex/ASCII:\\n0000  aa" in text
 ```
 
-- [ ] **Step 2: подтвердить Red-цикл** — `.venv/bin/python -m pytest tests/test_tui.py -v` должен завершиться FAIL.
+- [x] **Step 2: подтвердить Red-цикл** — `.venv/bin/python -m pytest tests/test_tui.py -v` должен завершиться FAIL.
 
-- [ ] **Step 3: написать минимальную реализацию** — добавить обязательный `read_details`; `_show_details` сохраняет семь строк сводки, добавляет секции `Дерево протоколов:` и `Hex/ASCII:`. Перехватывает `TsharkReadError` и `OSError`, заменяя секции строкой `Не удалось загрузить детали: <сообщение>`. Все данные TShark выводятся только через `Text`; новый выбор читает новый кадр.
+- [x] **Step 3: написать минимальную реализацию** — добавить обязательный `read_details`; `_show_details` сохраняет семь строк сводки, добавляет секции `Дерево протоколов:` и `Hex/ASCII:`. Перехватывает `TsharkReadError` и `OSError`, заменяя секции строкой `Не удалось загрузить детали: <сообщение>`. Все данные TShark выводятся только через `Text`; новый выбор читает новый кадр.
 
-- [ ] **Step 4: подтвердить Green-цикл** — `.venv/bin/python -m pytest tests/test_tui.py -v` должен завершиться PASS.
+- [x] **Step 4: подтвердить Green-цикл** — `.venv/bin/python -m pytest tests/test_tui.py -v` должен завершиться PASS.
 
-- [ ] **Step 5: закоммитить** с сообщением `Показать детали пакета в TUI`.
+- [x] **Step 5: закоммитить** с сообщением `Показать детали пакета в TUI`.
 
 ### Task 3: CLI-граница, документация и статус
 
@@ -103,7 +103,7 @@ async def test_app_shows_tree_and_hex_for_selected_packet() -> None:
 
 **Interfaces:** Consumes `read_packet_details(capture_path, tshark_path, frame_number)` и `WispWireApp(..., read_details)`. Produces `open`, передающий TUI замыкание для исходного файла.
 
-- [ ] **Step 1: написать падающий тест CLI**
+- [x] **Step 1: написать падающий тест CLI**
 
 ```python
 def test_open_passes_capture_to_packet_details_reader(monkeypatch, tmp_path: Path) -> None:
@@ -115,9 +115,9 @@ def test_open_passes_capture_to_packet_details_reader(monkeypatch, tmp_path: Pat
     assert read_details_calls == [(capture, Path("/usr/bin/tshark"), 1)]
 ```
 
-- [ ] **Step 2: подтвердить Red-цикл** — `.venv/bin/python -m pytest tests/test_cli_commands.py -v` должен завершиться FAIL.
+- [x] **Step 2: подтвердить Red-цикл** — `.venv/bin/python -m pytest tests/test_cli_commands.py -v` должен завершиться FAIL.
 
-- [ ] **Step 3: написать минимальную реализацию и документацию**
+- [x] **Step 3: написать минимальную реализацию и документацию**
 
 ```python
 def read_details(packet: PacketSummary) -> PacketDetails:
@@ -128,9 +128,9 @@ WispWireApp(packets, capture_path.name, read_details).run()
 
 Проверки пути и TShark, ошибки сводок и пустой захват не менять. README описывает дерево TShark и hex/ASCII выбранного кадра, read-only границы и отсутствие замены Wireshark. После проверок отметить текущую задачу и третий пункт этапа 4 как `[x]`; ближайшей задачей остаются безопасные временные сессии.
 
-- [ ] **Step 4: выполнить итоговые проверки** — последовательно запустить pytest, Ruff check, Ruff format check, mypy, `wispwire open --help` и проверку пробелов Git; все завершаются кодом 0.
+- [x] **Step 4: выполнить итоговые проверки** — последовательно запустить pytest, Ruff check, Ruff format check, mypy, `wispwire open --help` и проверку пробелов Git; все завершаются кодом 0.
 
-- [ ] **Step 5: отметить план и закоммитить** с сообщением `Завершить детали read-only TUI`.
+- [x] **Step 5: отметить план и закоммитить** с сообщением `Завершить детали read-only TUI`.
 
 ## Покрытие спецификации
 

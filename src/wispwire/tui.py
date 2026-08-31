@@ -120,6 +120,7 @@ class WispWireApp(App[None]):
             f"Length: {packet.length}",
             f"Info: {packet.info}",
         )
+        details: tuple[str, ...]
         try:
             packet_details = self._read_details(packet)
         except (TsharkReadError, OSError) as error:
