@@ -1,16 +1,48 @@
+import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 from threading import Event
 
 import pytest
 
-from wispwire.packets import PacketSummary
+from wispwire.packets import PacketDetails, PacketSummary
 from wispwire.tshark import (
     TsharkReadError,
+    build_details_command,
     build_fields_command,
     iter_packet_summaries,
     parse_packet_row,
+    read_packet_details,
 )
+
+
+def completed(
+    stdout: str, stderr: str = "", returncode: int = 0
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess([], returncode, stdout, stderr)
+
+
+def test_build_details_command_reads_only_selected_frame() -> None:
+    assert build_details_command(
+        Path("/opt/bin/tshark"), Path("capture.pcapng"), 7
+    ) == [
+        "/opt/bin/tshark",
+        "-n",
+        "-r",
+        "capture.pcapng",
+        "-Y",
+        "frame.number == 7",
+        "-V",
+        "-x",
+    ]
+
+
+def test_read_packet_details_separates_tree_and_hex() -> None:
+    result = completed("Frame 7: 72 bytes\n\n0000  01 02 03 04   ....\n")
+
+    assert read_packet_details(
+        Path("capture.pcapng"), Path("tshark"), 7, run=lambda *_a, **_k: result
+    ) == PacketDetails("Frame 7: 72 bytes", "0000  01 02 03 04   ....")
 
 
 class FakeProcess:

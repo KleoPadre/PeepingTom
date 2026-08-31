@@ -1,14 +1,78 @@
 import csv
+import re
 import subprocess
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from threading import Thread
 
-from wispwire.packets import PacketSummary
+from wispwire.packets import PacketDetails, PacketSummary
 
 
 class TsharkReadError(RuntimeError):
     """Ошибка чтения готового захвата через TShark."""
+
+
+def build_details_command(
+    tshark_path: Path, capture_path: Path, frame_number: int
+) -> list[str]:
+    return [
+        str(tshark_path),
+        "-n",
+        "-r",
+        str(capture_path),
+        "-Y",
+        f"frame.number == {frame_number}",
+        "-V",
+        "-x",
+    ]
+
+
+def read_packet_details(
+    capture_path: Path,
+    tshark_path: Path,
+    frame_number: int,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> PacketDetails:
+    if frame_number < 1:
+        raise TsharkReadError("Номер кадра должен быть не меньше 1.")
+
+    try:
+        result = run(
+            build_details_command(tshark_path, capture_path, frame_number),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except OSError as error:
+        raise TsharkReadError(f"Не удалось запустить TShark: {error}") from error
+
+    if result.returncode != 0:
+        message = (
+            result.stderr.strip() or f"TShark завершился с кодом {result.returncode}."
+        )
+        raise TsharkReadError(message)
+
+    output = result.stdout.strip()
+    if not output:
+        raise TsharkReadError("TShark вернул пустой вывод.")
+
+    lines = output.splitlines()
+    hex_index = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if re.match(r"^[0-9A-Fa-f]{4}  ", line)
+        ),
+        None,
+    )
+    if hex_index is None:
+        return PacketDetails(output, "Hex/ASCII-дамп отсутствует.")
+
+    return PacketDetails(
+        "\n".join(lines[:hex_index]).strip(),
+        "\n".join(lines[hex_index:]).strip(),
+    )
 
 
 def build_fields_command(tshark_path: Path, capture_path: Path) -> list[str]:
