@@ -27,6 +27,8 @@ def doctor() -> None:
     console.print("[bold]Диагностика WispWire[/bold]")
     console.print(f"Python: {report.python_version}")
     console.print(f"Версия WispWire: {report.wispwire_version}")
+    sqlite_status = "OK" if report.sqlite_fts5.available else "ОШИБКА"
+    console.print(f"SQLite FTS5 trigram: {sqlite_status}")
 
     tools_table = Table(title="Утилиты")
     tools_table.add_column("Утилита")
@@ -44,6 +46,8 @@ def doctor() -> None:
     console.print(tools_table)
 
     _print_interfaces(report.interfaces)
+    if not report.sqlite_fts5.available:
+        console.print(f"[yellow]Предупреждение: {report.sqlite_fts5.error}[/yellow]")
     if report.capture_warning is not None:
         console.print(f"[yellow]Предупреждение: {report.capture_warning}[/yellow]")
 

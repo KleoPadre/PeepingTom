@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
+from wispwire.sqlite_support import SqliteFeatureStatus, check_fts5_trigram
 from wispwire.wireshark import ToolStatus, inspect_tool
 
 INTERFACE_PATTERN = re.compile(r"^\s*\d+\.\s+([^\s(]+)")
@@ -23,6 +24,7 @@ class DoctorReport:
     tools: tuple[ToolStatus, ...]
     interfaces: tuple[str, ...]
     capture_warning: str | None
+    sqlite_fts5: SqliteFeatureStatus
 
 
 def list_interfaces(
@@ -54,6 +56,7 @@ def list_interfaces(
 def collect_doctor_report(
     inspect: Callable[[str], ToolStatus] = inspect_tool,
     interfaces: Callable[[], tuple[str, ...]] = list_interfaces,
+    sqlite_check: Callable[[], SqliteFeatureStatus] = check_fts5_trigram,
 ) -> DoctorReport:
     """Собрать статус инструментов без запуска live-захвата."""
     tools = tuple(inspect(name) for name in ("tshark", "dumpcap", "mergecap"))
@@ -74,6 +77,7 @@ def collect_doctor_report(
         capture_warning = None
 
     wispwire_version = _get_wispwire_version()
+    sqlite_fts5 = sqlite_check()
 
     return DoctorReport(
         python_version=platform.python_version(),
@@ -81,6 +85,7 @@ def collect_doctor_report(
         tools=tools,
         interfaces=available_interfaces,
         capture_warning=capture_warning,
+        sqlite_fts5=sqlite_fts5,
     )
 
 

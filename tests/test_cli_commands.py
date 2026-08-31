@@ -7,6 +7,7 @@ from typer.testing import CliRunner
 from wispwire.cli import app
 from wispwire.diagnostics import DoctorReport
 from wispwire.packets import PacketSummary
+from wispwire.sqlite_support import SqliteFeatureStatus
 from wispwire.tshark import TsharkReadError
 from wispwire.wireshark import ToolStatus
 
@@ -22,6 +23,7 @@ def fake_report() -> DoctorReport:
         ),
         interfaces=("en0", "lo0"),
         capture_warning=None,
+        sqlite_fts5=SqliteFeatureStatus(True, None),
     )
 
 
@@ -42,6 +44,9 @@ def test_doctor_prints_error_status_and_capture_warning(monkeypatch) -> None:
         tools=(ToolStatus("tshark", None, None, "утилита не найдена в PATH"),),
         interfaces=(),
         capture_warning="live-захват недоступен: установите dumpcap",
+        sqlite_fts5=SqliteFeatureStatus(
+            False, "SQLite FTS5 trigram недоступен: токенизатор не найден"
+        ),
     )
     monkeypatch.setattr("wispwire.cli.collect_doctor_report", lambda: report)
 
@@ -49,6 +54,8 @@ def test_doctor_prints_error_status_and_capture_warning(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert "ОШИБКА" in result.stdout
+    assert "SQLite FTS5 trigram: ОШИБКА" in result.stdout
+    assert "Предупреждение: SQLite FTS5 trigram недоступен" in result.stdout
     assert "Предупреждение: live-захват недоступен: установите dumpcap" in result.stdout
 
 
