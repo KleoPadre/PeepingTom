@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -154,6 +155,133 @@ def test_cleanup_skips_session_containing_symbolic_link(tmp_path: Path) -> None:
     assert session.path.is_dir()
     assert (session.path / "manifest.json").is_file()
     assert external.read_text(encoding="utf-8") == "не удалять"
+
+
+def test_close_session_does_not_follow_replacement_before_unlink(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    storage = SessionStorage(cache_root=tmp_path / "sessions", pid=123)
+    session = storage.create_session()
+    moved_session = tmp_path / "moved-session"
+    external = tmp_path / "external"
+    external.mkdir()
+    external_manifest = external / "manifest.json"
+    external_manifest.write_text("не удалять", encoding="utf-8")
+    real_unlink = os.unlink
+    replaced = False
+
+    def replace_session_then_unlink(
+        path: str | bytes | int, *, dir_fd: int | None = None
+    ) -> None:
+        nonlocal replaced
+        if not replaced:
+            replaced = True
+            session.path.rename(moved_session)
+            session.path.symlink_to(external, target_is_directory=True)
+        real_unlink(path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "unlink", replace_session_then_unlink)
+
+    assert storage.close_session(session) is False
+    assert replaced is True
+    assert external_manifest.read_text(encoding="utf-8") == "не удалять"
+    assert (moved_session / "manifest.json").exists() is False
+
+
+def test_close_session_does_not_follow_replaced_subdirectory_before_unlink(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    storage = SessionStorage(cache_root=tmp_path / "sessions", pid=123)
+    session = storage.create_session()
+    payload = session.path / "segments" / "part-0001.pcapng"
+    payload.parent.mkdir()
+    payload.write_bytes("временный файл".encode())
+    session = storage.register_file(session, payload)
+    moved_segments = session.path / "moved-segments"
+    external = tmp_path / "external"
+    external.mkdir()
+    external_payload = external / payload.name
+    external_payload.write_bytes("не удалять".encode())
+    real_unlink = os.unlink
+    replaced = False
+
+    def replace_subdirectory_then_unlink(
+        path: str | bytes | int, *, dir_fd: int | None = None
+    ) -> None:
+        nonlocal replaced
+        path_name = "" if isinstance(path, int) else Path(os.fsdecode(path)).name
+        if not replaced and path_name == payload.name:
+            replaced = True
+            payload.parent.rename(moved_segments)
+            payload.parent.symlink_to(external, target_is_directory=True)
+        real_unlink(path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "unlink", replace_subdirectory_then_unlink)
+
+    assert storage.close_session(session) is False
+    assert replaced is True
+    assert external_payload.read_bytes() == "не удалять".encode()
+    assert (moved_segments / payload.name).exists() is False
+
+
+def test_cleanup_rejects_symlink_in_intermediate_cache_root_component(
+    tmp_path: Path,
+) -> None:
+    real_parent = tmp_path / "real-parent"
+    cache_root = real_parent / "sessions"
+    cache_root.mkdir(parents=True)
+    alias = tmp_path / "alias"
+    alias.symlink_to(real_parent, target_is_directory=True)
+    storage = SessionStorage(
+        cache_root=alias / "sessions",
+        pid=123,
+        is_pid_alive=lambda _pid: False,
+    )
+    session = storage.create_session()
+
+    assert storage.cleanup_orphaned_sessions() == ()
+    assert session.path.is_dir()
+    assert (cache_root / session.path.name / "manifest.json").is_file()
+
+
+def test_cleanup_returns_empty_and_preserves_session_on_unlink_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    storage = SessionStorage(
+        cache_root=tmp_path, pid=123, is_pid_alive=lambda _pid: False
+    )
+    session = storage.create_session()
+
+    def fail_unlink(_path: str | bytes | int, *, dir_fd: int | None = None) -> None:
+        del dir_fd
+        raise OSError("ошибка удаления")
+
+    monkeypatch.setattr(os, "unlink", fail_unlink)
+
+    assert storage.cleanup_orphaned_sessions() == ()
+    assert session.path.is_dir()
+    assert (session.path / "manifest.json").is_file()
+
+
+def test_cleanup_returns_empty_and_leaves_directory_on_rmdir_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    storage = SessionStorage(
+        cache_root=tmp_path, pid=123, is_pid_alive=lambda _pid: False
+    )
+    session = storage.create_session()
+    real_rmdir = os.rmdir
+
+    def fail_session_rmdir(path: str | bytes, *, dir_fd: int | None = None) -> None:
+        if Path(os.fsdecode(path)).name == session.path.name:
+            raise OSError("ошибка удаления каталога")
+        real_rmdir(path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "rmdir", fail_session_rmdir)
+
+    assert storage.cleanup_orphaned_sessions() == ()
+    assert session.path.is_dir()
+    assert (session.path / "manifest.json").exists() is False
 
 
 def test_cleanup_skips_dangerous_candidates_and_preserves_external_file(

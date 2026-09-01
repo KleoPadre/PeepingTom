@@ -41,6 +41,19 @@ class Session:
     manifest: SessionManifest
 
 
+@dataclass(frozen=True)
+class _RemovableDirectory:
+    name: str
+    fd: int
+    contents: _RemovableContents
+
+
+@dataclass(frozen=True)
+class _RemovableContents:
+    files: tuple[str, ...]
+    directories: tuple[_RemovableDirectory, ...]
+
+
 class SessionStorage:
     """Создаёт сессии внутри выделенного корня cache."""
 
@@ -122,66 +135,109 @@ class SessionStorage:
     def close_session(self, session: Session) -> bool:
         """Удаляет только собственную подтверждённую временную сессию."""
         session_path = Path(session.path)
+        if (
+            session_path.parent != self.cache_root
+            or session_path.name != session.manifest.session_id
+            or not self._is_canonical_uuid(session_path.name)
+        ):
+            return False
         try:
-            if not self._is_safe_session_directory(session_path):
-                return False
-            manifest = self._read_manifest(session_path)
-            if (
-                manifest is None
-                or manifest != session.manifest
-                or manifest.pid != self.pid
-            ):
-                return False
-            return self._remove_safe_session(session_path, manifest)
+            cache_fd = self._open_cache_root()
         except OSError:
             return False
+        try:
+            session_fd = self._open_directory(session_path.name, dir_fd=cache_fd)
+        except OSError:
+            os.close(cache_fd)
+            return False
+        try:
+            manifest = self._read_manifest(session_fd, session_path.name)
+            if manifest != session.manifest or manifest.pid != self.pid:
+                return False
+            return self._remove_safe_session(
+                cache_fd, session_path.name, session_fd, manifest
+            )
+        except OSError:
+            return False
+        finally:
+            os.close(session_fd)
+            os.close(cache_fd)
 
     def cleanup_orphaned_sessions(self) -> tuple[Path, ...]:
         """Удаляет подтверждённые сессии, чей процесс-владелец уже завершился."""
-        if self.cache_root.is_symlink() or not self.cache_root.is_dir():
+        try:
+            cache_fd = self._open_cache_root()
+        except OSError:
             return ()
 
         removed: list[Path] = []
         try:
-            candidates = tuple(self.cache_root.iterdir())
+            candidates = tuple(os.listdir(cache_fd))
         except OSError:
+            os.close(cache_fd)
             return ()
-        for candidate in candidates:
-            try:
-                if not self._is_safe_session_directory(candidate):
+        try:
+            for session_id in candidates:
+                if not self._is_canonical_uuid(session_id):
                     continue
-                manifest = self._read_manifest(candidate)
-                if manifest is None or self.is_pid_alive(manifest.pid):
+                try:
+                    session_fd = self._open_directory(session_id, dir_fd=cache_fd)
+                except OSError:
                     continue
-                if self._remove_safe_session(candidate, manifest):
-                    removed.append(candidate)
-            except OSError:
-                continue
+                try:
+                    manifest = self._read_manifest(session_fd, session_id)
+                    if manifest is None or self.is_pid_alive(manifest.pid):
+                        continue
+                    if self._remove_safe_session(
+                        cache_fd, session_id, session_fd, manifest
+                    ):
+                        removed.append(self.cache_root / session_id)
+                except OSError:
+                    continue
+                finally:
+                    os.close(session_fd)
+        finally:
+            os.close(cache_fd)
         return tuple(removed)
 
-    def _is_safe_session_directory(self, candidate: Path) -> bool:
-        if self.cache_root.is_symlink() or candidate.is_symlink():
-            return False
-        if candidate.parent != self.cache_root or not candidate.is_dir():
-            return False
-        if not self._is_within(self.cache_root, candidate, strict=True):
-            return False
+    def _open_cache_root(self) -> int:
+        absolute_root = Path(os.path.abspath(self.cache_root))
+        current_fd = self._open_directory(os.sep)
         try:
-            parsed_id = uuid.UUID(candidate.name)
-        except ValueError:
-            return False
-        return str(parsed_id) == candidate.name
+            for component in absolute_root.parts[1:]:
+                next_fd = self._open_directory(component, dir_fd=current_fd)
+                os.close(current_fd)
+                current_fd = next_fd
+        except OSError:
+            os.close(current_fd)
+            raise
+        return current_fd
 
-    def _read_manifest(self, session_path: Path) -> SessionManifest | None:
-        manifest_path = session_path / "manifest.json"
-        if manifest_path.is_symlink() or not manifest_path.is_file():
-            return None
-        if not self._is_within(session_path, manifest_path, strict=True):
+    @staticmethod
+    def _open_directory(path: str, dir_fd: int | None = None) -> int:
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        flags |= getattr(os, "O_CLOEXEC", 0)
+        return os.open(path, flags, dir_fd=dir_fd)
+
+    def _read_manifest(
+        self, session_fd: int, expected_session_id: str
+    ) -> SessionManifest | None:
+        flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+        try:
+            manifest_fd = os.open("manifest.json", flags, dir_fd=session_fd)
+        except OSError:
             return None
         try:
-            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if not stat.S_ISREG(os.fstat(manifest_fd).st_mode):
+                return None
+            with os.fdopen(manifest_fd, encoding="utf-8") as manifest_file:
+                manifest_fd = -1
+                payload = json.load(manifest_file)
         except (OSError, json.JSONDecodeError, UnicodeDecodeError):
             return None
+        finally:
+            if manifest_fd != -1:
+                os.close(manifest_fd)
         if not isinstance(payload, dict):
             return None
         if set(payload) != {
@@ -209,7 +265,7 @@ class SessionStorage:
             or any(not isinstance(path, str) for path in owned_files)
         ):
             return None
-        if session_id != session_path.name or not self._is_canonical_uuid(session_id):
+        if session_id != expected_session_id or not self._is_canonical_uuid(session_id):
             return None
         try:
             timestamp = datetime.fromisoformat(started_at)
@@ -224,7 +280,7 @@ class SessionStorage:
             return None
         try:
             for path in normalized_owned:
-                self._safe_owned_path(session_path, path)
+                self._validate_owned_path(path)
         except SessionSafetyError:
             return None
         return SessionManifest(
@@ -236,59 +292,90 @@ class SessionStorage:
         )
 
     def _remove_safe_session(
-        self, session_path: Path, manifest: SessionManifest
+        self,
+        cache_fd: int,
+        session_id: str,
+        session_fd: int,
+        manifest: SessionManifest,
     ) -> bool:
-        paths = self._collect_removable_paths(session_path, manifest)
-        if paths is None:
+        contents = self._collect_removable_contents(
+            session_fd, (), set(manifest.owned_files)
+        )
+        if contents is None:
             return False
-        files, directories = paths
         try:
-            for path in files:
-                path.unlink()
-            for path in reversed(directories):
-                path.rmdir()
-            session_path.rmdir()
+            self._remove_contents(session_fd, contents)
+            if not self._is_same_directory(cache_fd, session_id, session_fd):
+                return False
+            os.rmdir(session_id, dir_fd=cache_fd)
         except OSError:
             return False
+        finally:
+            self._close_contents(contents)
         return True
 
-    def _collect_removable_paths(
-        self, session_path: Path, manifest: SessionManifest
-    ) -> tuple[list[Path], list[Path]] | None:
-        files: list[Path] = []
-        directories: list[Path] = []
-        owned_paths = set(manifest.owned_files)
-
-        def collect(directory: Path) -> bool:
-            try:
-                children = tuple(directory.iterdir())
-            except OSError:
-                return False
-            for child in children:
-                if child.is_symlink() or not self._is_within(
-                    session_path, child, strict=True
-                ):
-                    return False
-                try:
-                    mode = child.lstat().st_mode
-                except OSError:
-                    return False
+    def _collect_removable_contents(
+        self,
+        directory_fd: int,
+        relative_parts: tuple[str, ...],
+        owned_paths: set[str],
+    ) -> _RemovableContents | None:
+        files: list[str] = []
+        directories: list[_RemovableDirectory] = []
+        try:
+            names = sorted(os.listdir(directory_fd))
+            for name in names:
+                mode = os.stat(name, dir_fd=directory_fd, follow_symlinks=False).st_mode
+                relative = "/".join((*relative_parts, name))
                 if stat.S_ISREG(mode):
-                    relative = child.relative_to(session_path).as_posix()
                     if relative != "manifest.json" and relative not in owned_paths:
-                        return False
-                    files.append(child)
+                        raise SessionSafetyError("обнаружен незарегистрированный файл")
+                    files.append(name)
                 elif stat.S_ISDIR(mode):
-                    if not collect(child):
-                        return False
-                    directories.append(child)
+                    child_fd = self._open_directory(name, dir_fd=directory_fd)
+                    child_contents = self._collect_removable_contents(
+                        child_fd, (*relative_parts, name), owned_paths
+                    )
+                    if child_contents is None:
+                        os.close(child_fd)
+                        raise SessionSafetyError("каталог сессии небезопасен")
+                    directories.append(
+                        _RemovableDirectory(name, child_fd, child_contents)
+                    )
                 else:
-                    return False
-            return True
-
-        if not collect(session_path):
+                    raise SessionSafetyError("обнаружен небезопасный объект")
+        except (OSError, SessionSafetyError):
+            self._close_contents(_RemovableContents((), tuple(directories)))
             return None
-        return files, directories
+        return _RemovableContents(tuple(files), tuple(directories))
+
+    def _remove_contents(self, directory_fd: int, contents: _RemovableContents) -> None:
+        for name in contents.files:
+            os.unlink(name, dir_fd=directory_fd)
+        for directory in reversed(contents.directories):
+            self._remove_contents(directory.fd, directory.contents)
+            if not self._is_same_directory(directory_fd, directory.name, directory.fd):
+                raise OSError("каталог был подменён во время удаления")
+            os.rmdir(directory.name, dir_fd=directory_fd)
+
+    @classmethod
+    def _close_contents(cls, contents: _RemovableContents) -> None:
+        for directory in contents.directories:
+            cls._close_contents(directory.contents)
+            os.close(directory.fd)
+
+    @staticmethod
+    def _is_same_directory(parent_fd: int, name: str, directory_fd: int) -> bool:
+        try:
+            current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+            opened = os.fstat(directory_fd)
+        except OSError:
+            return False
+        return (
+            stat.S_ISDIR(current.st_mode)
+            and current.st_dev == opened.st_dev
+            and current.st_ino == opened.st_ino
+        )
 
     @staticmethod
     def _default_is_pid_alive(pid: int) -> bool:
@@ -307,15 +394,15 @@ class SessionStorage:
         except ValueError:
             return False
 
-    def _safe_owned_path(self, session_path: Path, value: str) -> None:
+    @staticmethod
+    def _validate_owned_path(value: str) -> None:
         relative = Path(value)
-        if relative.is_absolute() or any(
-            part in ("", ".", "..") for part in relative.parts
+        if (
+            not relative.parts
+            or relative.is_absolute()
+            or any(part in ("", ".", "..") for part in relative.parts)
         ):
             raise SessionSafetyError("недопустимый путь в manifest")
-        path = session_path / relative
-        if not self._is_within(session_path, path, strict=True):
-            raise SessionSafetyError("путь manifest выходит за пределы сессии")
 
     def _validate_session_path(self, session: Session) -> Path:
         session_path = Path(session.path)
