@@ -14,6 +14,13 @@ from wispwire.sessions import (
 )
 
 
+def _replace_manifest(session: Session, **changes: object) -> None:
+    manifest_path = session.path / "manifest.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload.update(changes)
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+
 def test_create_session_writes_valid_manifest(tmp_path: Path) -> None:
     storage = SessionStorage(cache_root=tmp_path, pid=123)
 
@@ -31,6 +38,69 @@ def test_default_cache_root_uses_xdg_cache_home_on_linux(
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
 
     assert SessionStorage.default_cache_root() == tmp_path / "wispwire" / "sessions"
+
+
+def test_default_cache_root_uses_macos_cache_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    assert (
+        SessionStorage.default_cache_root()
+        == tmp_path / "Library/Caches/WispWire/sessions"
+    )
+
+
+def test_default_cache_root_uses_linux_fallback_without_xdg_cache_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    assert SessionStorage.default_cache_root() == tmp_path / ".cache/wispwire/sessions"
+
+
+def test_default_cache_root_ignores_relative_xdg_cache_home(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setenv("XDG_CACHE_HOME", "relative-cache")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    assert SessionStorage.default_cache_root() == tmp_path / ".cache/wispwire/sessions"
+
+
+def test_storage_keeps_original_relative_cache_root_after_cwd_change(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    original_cwd = tmp_path / "original"
+    other_cwd = tmp_path / "other"
+    original_cwd.mkdir()
+    other_cwd.mkdir()
+    monkeypatch.chdir(original_cwd)
+    storage = SessionStorage(
+        cache_root=Path("sessions"), pid=123, is_pid_alive=lambda _pid: False
+    )
+    session = storage.create_session()
+    original_session = original_cwd / "sessions" / session.manifest.session_id
+    manifest_bytes = (original_session / "manifest.json").read_bytes()
+    decoy = other_cwd / "sessions" / session.manifest.session_id
+    decoy.mkdir(parents=True)
+    (decoy / "manifest.json").write_bytes(manifest_bytes)
+
+    monkeypatch.chdir(other_cwd)
+
+    assert storage.close_session(session) is True
+    assert not original_session.exists()
+    assert (decoy / "manifest.json").read_bytes() == manifest_bytes
+
+
+@pytest.mark.parametrize("pid", [0, -1, 10**100])
+def test_storage_rejects_invalid_injected_pid(tmp_path: Path, pid: int) -> None:
+    with pytest.raises(ValueError, match="PID"):
+        SessionStorage(cache_root=tmp_path, pid=pid)
 
 
 def test_register_file_updates_manifest_and_counts_regular_file(tmp_path: Path) -> None:
@@ -224,7 +294,7 @@ def test_close_session_does_not_follow_replaced_subdirectory_before_unlink(
     assert (moved_segments / payload.name).exists() is False
 
 
-def test_cleanup_rejects_symlink_in_intermediate_cache_root_component(
+def test_create_session_rejects_symlink_in_intermediate_cache_root_component(
     tmp_path: Path,
 ) -> None:
     real_parent = tmp_path / "real-parent"
@@ -237,11 +307,11 @@ def test_cleanup_rejects_symlink_in_intermediate_cache_root_component(
         pid=123,
         is_pid_alive=lambda _pid: False,
     )
-    session = storage.create_session()
 
-    assert storage.cleanup_orphaned_sessions() == ()
-    assert session.path.is_dir()
-    assert (cache_root / session.path.name / "manifest.json").is_file()
+    with pytest.raises(SessionSafetyError):
+        storage.create_session()
+
+    assert tuple(cache_root.iterdir()) == ()
 
 
 def test_cleanup_returns_empty_and_preserves_session_on_unlink_error(
@@ -320,6 +390,62 @@ def test_cleanup_skips_dangerous_candidates_and_preserves_external_file(
     assert malformed.exists()
     assert traversal.exists()
     assert linked.is_symlink()
+
+
+def test_cleanup_skips_manifest_with_unknown_schema(tmp_path: Path) -> None:
+    storage = SessionStorage(
+        cache_root=tmp_path, pid=123, is_pid_alive=lambda _pid: False
+    )
+    session = storage.create_session()
+    _replace_manifest(session, schema_version=2)
+
+    assert storage.cleanup_orphaned_sessions() == ()
+    assert session.path.is_dir()
+
+
+@pytest.mark.parametrize("pid", [0, -1, 10**100])
+def test_cleanup_skips_manifest_with_invalid_pid(tmp_path: Path, pid: int) -> None:
+    storage = SessionStorage(
+        cache_root=tmp_path, pid=123, is_pid_alive=lambda _pid: False
+    )
+    session = storage.create_session()
+    _replace_manifest(session, pid=pid)
+
+    assert storage.cleanup_orphaned_sessions() == ()
+    assert session.path.is_dir()
+
+
+def test_cleanup_skips_overflowing_pid_and_continues(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    storage = SessionStorage(cache_root=tmp_path, pid=123)
+    overflowing = storage.create_session()
+    removable = storage.create_session()
+    _replace_manifest(removable, pid=456)
+
+    def report_pid(pid: int, _signal: int) -> None:
+        if pid == 123:
+            raise OverflowError("PID не представим в системном типе")
+        raise ProcessLookupError
+
+    monkeypatch.setattr(os, "kill", report_pid)
+
+    assert storage.cleanup_orphaned_sessions() == (removable.path,)
+    assert overflowing.path.is_dir()
+    assert not removable.path.exists()
+
+
+def test_cleanup_skips_session_with_unregistered_regular_file(tmp_path: Path) -> None:
+    storage = SessionStorage(
+        cache_root=tmp_path, pid=123, is_pid_alive=lambda _pid: False
+    )
+    session = storage.create_session()
+    unregistered = session.path / "unregistered.pcapng"
+    expected = "не удалять".encode()
+    unregistered.write_bytes(expected)
+
+    assert storage.cleanup_orphaned_sessions() == ()
+    assert unregistered.read_bytes() == expected
 
 
 def test_close_session_removes_own_valid_session(tmp_path: Path) -> None:

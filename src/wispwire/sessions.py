@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+_MAX_PID = (1 << 31) - 1
+
 
 class SessionSafetyError(RuntimeError):
     """Операция затрагивает небезопасный путь или файл."""
@@ -63,10 +65,14 @@ class SessionStorage:
         pid: int | None = None,
         is_pid_alive: Callable[[int], bool] | None = None,
     ) -> None:
-        self.cache_root = (
+        selected_root = (
             Path(cache_root) if cache_root is not None else self.default_cache_root()
         )
-        self.pid = os.getpid() if pid is None else pid
+        self.cache_root = Path(os.path.abspath(os.fspath(selected_root)))
+        selected_pid = os.getpid() if pid is None else pid
+        if not self._is_valid_pid(selected_pid):
+            raise ValueError("PID должен быть положительным 32-битным целым числом")
+        self.pid = selected_pid
         self.is_pid_alive = is_pid_alive or self._default_is_pid_alive
 
     @staticmethod
@@ -75,30 +81,44 @@ class SessionStorage:
             return Path.home() / "Library/Caches/WispWire/sessions"
         if sys.platform == "linux":
             cache_home = os.environ.get("XDG_CACHE_HOME")
-            return (
-                Path(cache_home) if cache_home else Path.home() / ".cache"
-            ) / "wispwire/sessions"
+            cache_root = Path(cache_home) if cache_home else Path.home() / ".cache"
+            if not cache_root.is_absolute():
+                cache_root = Path.home() / ".cache"
+            return cache_root / "wispwire/sessions"
         return Path.home() / ".cache/wispwire/sessions"
 
     def create_session(self) -> Session:
-        self.cache_root.mkdir(parents=True, exist_ok=True)
-        while True:
-            session_id = str(uuid.uuid4())
-            session_path = self.cache_root / session_id
+        try:
+            cache_fd = self._open_cache_root(create=True)
+        except OSError as error:
+            raise SessionSafetyError(
+                "cache-root содержит ссылку или недоступен"
+            ) from error
+        try:
+            while True:
+                session_id = str(uuid.uuid4())
+                session_path = self.cache_root / session_id
+                try:
+                    os.mkdir(session_id, mode=0o700, dir_fd=cache_fd)
+                except FileExistsError:
+                    continue
+                break
+            session_fd = self._open_directory(session_id, dir_fd=cache_fd)
             try:
-                session_path.mkdir()
-            except FileExistsError:
-                continue
-            break
-
-        manifest = SessionManifest(
-            schema_version=1,
-            session_id=session_id,
-            pid=self.pid,
-            started_at=datetime.now(UTC).isoformat(),
-            owned_files=(),
-        )
-        self._write_manifest(session_path, manifest)
+                manifest = SessionManifest(
+                    schema_version=1,
+                    session_id=session_id,
+                    pid=self.pid,
+                    started_at=datetime.now(UTC).isoformat(),
+                    owned_files=(),
+                )
+                self._write_manifest_at(session_fd, manifest)
+            finally:
+                os.close(session_fd)
+        except OSError as error:
+            raise SessionSafetyError("не удалось безопасно создать сессию") from error
+        finally:
+            os.close(cache_fd)
         return Session(path=session_path, manifest=manifest)
 
     def register_file(self, session: Session, path: Path) -> Session:
@@ -200,12 +220,20 @@ class SessionStorage:
             os.close(cache_fd)
         return tuple(removed)
 
-    def _open_cache_root(self) -> int:
-        absolute_root = Path(os.path.abspath(self.cache_root))
+    def _open_cache_root(self, *, create: bool = False) -> int:
         current_fd = self._open_directory(os.sep)
         try:
-            for component in absolute_root.parts[1:]:
-                next_fd = self._open_directory(component, dir_fd=current_fd)
+            for component in self.cache_root.parts[1:]:
+                try:
+                    next_fd = self._open_directory(component, dir_fd=current_fd)
+                except FileNotFoundError:
+                    if not create:
+                        raise
+                    try:
+                        os.mkdir(component, mode=0o700, dir_fd=current_fd)
+                    except FileExistsError:
+                        pass
+                    next_fd = self._open_directory(component, dir_fd=current_fd)
                 os.close(current_fd)
                 current_fd = next_fd
         except OSError:
@@ -258,8 +286,7 @@ class SessionStorage:
             type(schema_version) is not int
             or schema_version != 1
             or not isinstance(session_id, str)
-            or type(pid) is not int
-            or pid <= 0
+            or not self._is_valid_pid(pid)
             or not isinstance(started_at, str)
             or not isinstance(owned_files, list)
             or any(not isinstance(path, str) for path in owned_files)
@@ -379,13 +406,21 @@ class SessionStorage:
 
     @staticmethod
     def _default_is_pid_alive(pid: int) -> bool:
+        if not SessionStorage._is_valid_pid(pid):
+            return True
         try:
             os.kill(pid, 0)
         except ProcessLookupError:
             return False
         except PermissionError:
             return True
+        except OverflowError:
+            return True
         return True
+
+    @staticmethod
+    def _is_valid_pid(value: object) -> bool:
+        return type(value) is int and 0 < value <= _MAX_PID
 
     @staticmethod
     def _is_canonical_uuid(value: str) -> bool:
@@ -460,3 +495,35 @@ class SessionStorage:
             temporary.replace(session_path / "manifest.json")
         finally:
             temporary.unlink(missing_ok=True)
+
+    @staticmethod
+    def _write_manifest_at(directory_fd: int, manifest: SessionManifest) -> None:
+        temporary = f".manifest-{uuid.uuid4().hex}.tmp"
+        flags = (
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | os.O_NOFOLLOW
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        manifest_fd = -1
+        try:
+            manifest_fd = os.open(temporary, flags, 0o600, dir_fd=directory_fd)
+            with os.fdopen(manifest_fd, "w", encoding="utf-8") as manifest_file:
+                manifest_fd = -1
+                manifest_file.write(
+                    json.dumps(manifest.to_dict(), ensure_ascii=False, indent=2) + "\n"
+                )
+            os.replace(
+                temporary,
+                "manifest.json",
+                src_dir_fd=directory_fd,
+                dst_dir_fd=directory_fd,
+            )
+        finally:
+            if manifest_fd != -1:
+                os.close(manifest_fd)
+            try:
+                os.unlink(temporary, dir_fd=directory_fd)
+            except FileNotFoundError:
+                pass

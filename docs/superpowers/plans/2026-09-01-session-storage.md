@@ -101,7 +101,7 @@ def test_register_file_updates_manifest_and_counts_regular_file(tmp_path: Path) 
 
 **Интерфейсы:** потребляет API задачи 1; производит `SessionStorage.close_session()` и `cleanup_orphaned_sessions()`.
 
-- [ ] **Шаг 1: написать падающие тесты cleanup.**
+- [x] **Шаг 1: написать падающие тесты cleanup.**
 
 ```python
 def test_cleanup_removes_only_valid_orphan(tmp_path: Path) -> None:
@@ -117,11 +117,11 @@ def test_cleanup_skips_session_with_live_pid(tmp_path: Path) -> None:
     assert session.path.is_dir()
 ```
 
-- [ ] **Шаг 2: добавить тест опасных кандидатов:** неверный UUID, некорректный JSON, `owned_files=["../external.txt"]`, символическая ссылка и подменённый manifest; внешний файл должен остаться неизменным, а `close_session()` — отклонить небезопасную сессию.
+- [x] **Шаг 2: добавить тест опасных кандидатов:** неверный UUID, некорректный JSON, `owned_files=["../external.txt"]`, символическая ссылка и подменённый manifest; внешний файл должен остаться неизменным, а `close_session()` — отклонить небезопасную сессию.
 
-- [ ] **Шаг 3: запустить `.venv/bin/python -m pytest -q tests/test_sessions.py`; убедиться в FAIL, так как cleanup ещё нет.**
+- [x] **Шаг 3: запустить `.venv/bin/python -m pytest -q tests/test_sessions.py`; убедиться в FAIL, так как cleanup ещё нет.**
 
-- [ ] **Шаг 4: реализовать проверяемую очистку.**
+- [x] **Шаг 4: реализовать проверяемую очистку.**
 
 ```python
 def close_session(self, session: Session) -> bool: ...
@@ -132,9 +132,9 @@ def _read_manifest(self, session_path: Path) -> SessionManifest | None: ...
 
 Cleanup вызывает только `cache_root.iterdir()`. До удаления проверяет UUID имени, отсутствие ссылок на пути, containment, валидный manifest и мёртвый PID. Удаление обходит только обычные файлы и каталоги; первая ссылка, ошибка или выход за root оставляют кандидат. `close_session()` повторяет те же проверки.
 
-- [ ] **Шаг 5: выполнить проверки.** Последовательно: `.venv/bin/python -m pytest -q tests/test_sessions.py`, `.venv/bin/python -m pytest -q`, `.venv/bin/ruff check src tests`, `.venv/bin/ruff format --check src tests`, `.venv/bin/mypy src`, `git diff --check`; ожидается код 0.
+- [x] **Шаг 5: выполнить проверки.** Последовательно: `.venv/bin/python -m pytest -q tests/test_sessions.py`, `.venv/bin/python -m pytest -q`, `.venv/bin/ruff check src tests`, `.venv/bin/ruff format --check src tests`, `.venv/bin/mypy src`, `git diff --check`; ожидается код 0.
 
-- [ ] **Шаг 6: отметить оба пункта этапа 5 как `[x]` и закоммитить.** Использовать `git add src/wispwire/sessions.py tests/test_sessions.py docs/superpowers/plans/2026-08-28-wispwire-tui.md` и `git commit -m "Завершить безопасные временные сессии"`.
+- [x] **Шаг 6: отметить оба пункта этапа 5 как `[x]` и закоммитить.** Использовать `git add src/wispwire/sessions.py tests/test_sessions.py docs/superpowers/plans/2026-08-28-wispwire-tui.md` и `git commit -m "Завершить безопасные временные сессии"`.
 
 ## Покрытие спецификации
 
