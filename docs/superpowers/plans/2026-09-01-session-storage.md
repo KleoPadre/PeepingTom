@@ -33,7 +33,7 @@
 
 **Интерфейсы:** производит `SessionManifest`, `Session`, `SessionSafetyError`, `SessionStorage.default_cache_root()`, `create_session()`, `register_file()` и `session_size()`.
 
-- [ ] **Шаг 1: написать падающие тесты cache-root и manifest.**
+- [x] **Шаг 1: написать падающие тесты cache-root и manifest.**
 
 ```python
 def test_create_session_writes_valid_manifest(tmp_path: Path) -> None:
@@ -51,9 +51,9 @@ def test_default_cache_root_uses_xdg_cache_home_on_linux(
     assert SessionStorage.default_cache_root() == tmp_path / "wispwire" / "sessions"
 ```
 
-- [ ] **Шаг 2: запустить `.venv/bin/python -m pytest -q tests/test_sessions.py`; убедиться в FAIL, так как `wispwire.sessions` отсутствует.**
+- [x] **Шаг 2: запустить `.venv/bin/python -m pytest -q tests/test_sessions.py`; убедиться в FAIL, так как `wispwire.sessions` отсутствует.**
 
-- [ ] **Шаг 3: реализовать минимальный API.**
+- [x] **Шаг 3: реализовать минимальный API.**
 
 ```python
 @dataclass(frozen=True)
@@ -79,7 +79,7 @@ class SessionStorage:
 
 macOS: `Path.home() / "Library/Caches/WispWire/sessions"`; Linux: `XDG_CACHE_HOME` или `Path.home() / ".cache"`, затем `wispwire/sessions`. Создание записывает JSON во временный файл того же каталога и делает `Path.replace`. Регистрация разрешает только обычный файл с лексическим и resolved-путём внутри session root; сохраняет относительный путь без дублей. Размер суммирует regular-файлы, а ссылка или выход из root возбуждают `SessionSafetyError`.
 
-- [ ] **Шаг 4: добавить тест регистрации и размера.**
+- [x] **Шаг 4: добавить тест регистрации и размера.**
 
 ```python
 def test_register_file_updates_manifest_and_counts_regular_file(tmp_path: Path) -> None:
@@ -93,7 +93,7 @@ def test_register_file_updates_manifest_and_counts_regular_file(tmp_path: Path) 
     assert storage.session_size(updated) >= 3
 ```
 
-- [ ] **Шаг 5: запустить тесты задачи и закоммитить.** Запустить `.venv/bin/python -m pytest -q tests/test_sessions.py`, затем `git add src/wispwire/sessions.py tests/test_sessions.py` и `git commit -m "Добавить хранилище временных сессий"`.
+- [x] **Шаг 5: запустить тесты задачи и закоммитить.** Запустить `.venv/bin/python -m pytest -q tests/test_sessions.py`, затем `git add src/wispwire/sessions.py tests/test_sessions.py` и `git commit -m "Добавить хранилище временных сессий"`.
 
 ### Task 2: безопасная очистка осиротевших сессий
 
