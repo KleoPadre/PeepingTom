@@ -1,4 +1,6 @@
+import json
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -102,3 +104,124 @@ def test_session_size_rejects_symbolic_link(tmp_path: Path) -> None:
 
     with pytest.raises(SessionSafetyError):
         storage.session_size(session)
+
+
+def test_cleanup_removes_only_valid_orphan(tmp_path: Path) -> None:
+    storage = SessionStorage(
+        cache_root=tmp_path, pid=123, is_pid_alive=lambda _pid: False
+    )
+    session = storage.create_session()
+
+    assert storage.cleanup_orphaned_sessions() == (session.path,)
+    assert not session.path.exists()
+
+
+def test_cleanup_removes_registered_files_from_valid_orphan(tmp_path: Path) -> None:
+    storage = SessionStorage(
+        cache_root=tmp_path, pid=123, is_pid_alive=lambda _pid: False
+    )
+    session = storage.create_session()
+    payload = session.path / "segments" / "part-0001.pcapng"
+    payload.parent.mkdir()
+    payload.write_bytes(b"pcapng")
+    storage.register_file(session, payload)
+
+    assert storage.cleanup_orphaned_sessions() == (session.path,)
+    assert not payload.exists()
+    assert not session.path.exists()
+
+
+def test_cleanup_skips_session_with_live_pid(tmp_path: Path) -> None:
+    storage = SessionStorage(
+        cache_root=tmp_path, pid=123, is_pid_alive=lambda _pid: True
+    )
+    session = storage.create_session()
+
+    assert storage.cleanup_orphaned_sessions() == ()
+    assert session.path.is_dir()
+
+
+def test_cleanup_skips_session_containing_symbolic_link(tmp_path: Path) -> None:
+    external = tmp_path / "external.txt"
+    external.write_text("не удалять", encoding="utf-8")
+    storage = SessionStorage(
+        cache_root=tmp_path, pid=123, is_pid_alive=lambda _pid: False
+    )
+    session = storage.create_session()
+    (session.path / "linked.txt").symlink_to(external)
+
+    assert storage.cleanup_orphaned_sessions() == ()
+    assert session.path.is_dir()
+    assert (session.path / "manifest.json").is_file()
+    assert external.read_text(encoding="utf-8") == "не удалять"
+
+
+def test_cleanup_skips_dangerous_candidates_and_preserves_external_file(
+    tmp_path: Path,
+) -> None:
+    external = tmp_path / "external.txt"
+    external.write_text("не удалять", encoding="utf-8")
+    storage = SessionStorage(
+        cache_root=tmp_path, pid=123, is_pid_alive=lambda _pid: False
+    )
+    invalid_uuid = tmp_path / "not-a-uuid"
+    invalid_uuid.mkdir()
+    malformed = tmp_path / str(uuid.uuid4())
+    malformed.mkdir()
+    (malformed / "manifest.json").write_text("{", encoding="utf-8")
+    traversal = tmp_path / str(uuid.uuid4())
+    traversal.mkdir()
+    (traversal / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "session_id": traversal.name,
+                "pid": 123,
+                "started_at": "2026-09-01T00:00:00+00:00",
+                "owned_files": ["../external.txt"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    linked = tmp_path / str(uuid.uuid4())
+    linked.symlink_to(external)
+
+    assert storage.cleanup_orphaned_sessions() == ()
+    assert external.read_text(encoding="utf-8") == "не удалять"
+    assert invalid_uuid.exists()
+    assert malformed.exists()
+    assert traversal.exists()
+    assert linked.is_symlink()
+
+
+def test_close_session_removes_own_valid_session(tmp_path: Path) -> None:
+    storage = SessionStorage(cache_root=tmp_path, pid=123)
+    session = storage.create_session()
+
+    assert storage.close_session(session) is True
+    assert not session.path.exists()
+
+
+def test_close_session_rejects_substituted_manifest_and_preserves_external_file(
+    tmp_path: Path,
+) -> None:
+    storage = SessionStorage(cache_root=tmp_path, pid=123)
+    session = storage.create_session()
+    external = tmp_path / "external.txt"
+    external.write_text("не удалять", encoding="utf-8")
+    (session.path / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "session_id": str(uuid.uuid4()),
+                "pid": 123,
+                "started_at": "2026-09-01T00:00:00+00:00",
+                "owned_files": ["../external.txt"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert storage.close_session(session) is False
+    assert session.path.is_dir()
+    assert external.read_text(encoding="utf-8") == "не удалять"
