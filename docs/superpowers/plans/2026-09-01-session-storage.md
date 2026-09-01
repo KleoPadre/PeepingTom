@@ -27,7 +27,7 @@
 - `tests/test_sessions.py`: изолированные тесты API и опасных путей.
 - `docs/superpowers/plans/2026-08-28-wispwire-tui.md`: отметка этапа 5 после проверок.
 
-### Задача 1: создание сессии, manifest и размер
+### Task 1: создание сессии, manifest и размер
 
 **Файлы:** создать `src/wispwire/sessions.py` и `tests/test_sessions.py`.
 
@@ -95,7 +95,7 @@ def test_register_file_updates_manifest_and_counts_regular_file(tmp_path: Path) 
 
 - [ ] **Шаг 5: запустить тесты задачи и закоммитить.** Запустить `.venv/bin/python -m pytest -q tests/test_sessions.py`, затем `git add src/wispwire/sessions.py tests/test_sessions.py` и `git commit -m "Добавить хранилище временных сессий"`.
 
-### Задача 2: безопасная очистка осиротевших сессий
+### Task 2: безопасная очистка осиротевших сессий
 
 **Файлы:** изменить `src/wispwire/sessions.py`, `tests/test_sessions.py` и статусный план.
 
