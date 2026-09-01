@@ -115,6 +115,12 @@ class SessionStorage:
         session_path = Path(session.path)
         if session_path.name != session.manifest.session_id:
             raise SessionSafetyError("имя сессии не совпадает с manifest")
+        try:
+            parsed_id = uuid.UUID(session_path.name)
+        except ValueError as error:
+            raise SessionSafetyError("имя сессии не является UUID") from error
+        if str(parsed_id) != session_path.name:
+            raise SessionSafetyError("имя сессии не является каноническим UUID")
         if not self._is_within(self.cache_root, session_path, strict=True):
             raise SessionSafetyError("сессия находится вне cache-root")
         if session_path.is_symlink() or not session_path.is_dir():
@@ -143,6 +149,11 @@ class SessionStorage:
             raise SessionSafetyError("файл находится вне сессии") from error
         if any(part in ("", ".", "..") for part in relative.parts):
             raise SessionSafetyError("недопустимый относительный путь")
+        current = session_path
+        for component in relative.parts:
+            current /= component
+            if current.is_symlink():
+                raise SessionSafetyError("символьная ссылка запрещена в пути")
         return relative.as_posix()
 
     @staticmethod
