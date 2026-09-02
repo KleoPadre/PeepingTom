@@ -5,7 +5,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from wispwire.capture import CaptureError, CaptureSession
+from wispwire.capture import CaptureError, CaptureSession, CaptureState
 from wispwire.diagnostics import collect_doctor_report, list_interfaces
 from wispwire.packets import PacketDetails, PacketSummary
 from wispwire.sessions import SessionStorage
@@ -98,12 +98,19 @@ def capture(
             f"Live-захват запущен на интерфейсе {interface}. "
             "Чтобы остановить захват, нажмите Ctrl-C."
         )
-        while True:
+        while session.state is CaptureState.RUNNING:
+            session.collect_closed_segments()
+            if session.state is not CaptureState.RUNNING:
+                break
             sleep(1)
+        if session.state is CaptureState.LIMIT_REACHED:
+            console.print("Live-захват остановлен: достигнут лимит размера.")
+        elif session.state is CaptureState.STOPPED:
+            console.print("Live-захват завершён процессом dumpcap.")
     except KeyboardInterrupt:
         console.print("Live-захват остановлен.")
     except CaptureError as error:
-        console.print(f"Не удалось запустить live-захват: {error}")
+        console.print(f"Ошибка live-захвата: {error}")
         raise typer.Exit(code=1) from None
     finally:
         session.close()

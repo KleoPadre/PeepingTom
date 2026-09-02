@@ -21,18 +21,25 @@ from wispwire.sessions import Session, SessionStorage
 
 
 class _Process:
-    def __init__(self, returncode: int = 0) -> None:
+    def __init__(self, returncode: int = 0, *, running: bool = True) -> None:
         self.returncode = returncode
+        self.running = running
         self.terminated = False
         self.waited = False
         self.stdout: object | None = None
+        self.stderr: object | None = None
 
     def terminate(self) -> None:
         self.terminated = True
+        self.running = False
 
     def wait(self) -> int:
         self.waited = True
+        self.running = False
         return self.returncode
+
+    def poll(self) -> int | None:
+        return None if self.running else self.returncode
 
 
 def completed(
@@ -212,6 +219,32 @@ def test_stop_marks_capture_failed_when_dumpcap_exits_with_error(
     capture.start()
 
     with pytest.raises(CaptureError, match="кодом 1"):
+        capture.stop()
+
+    assert capture.state is CaptureState.FAILED
+
+
+def test_stop_registers_final_segment_before_changing_state(tmp_path: Path) -> None:
+    capture = started_capture(tmp_path)
+    assert capture.session is not None
+    assert capture._process is not None
+    segment = capture.session.path / "segment_final.pcapng"
+    segment.write_bytes(b"final")
+    capture._process.stdout = iter([f"{segment}\n"])
+
+    capture.stop()
+
+    assert capture.state is CaptureState.STOPPED
+    assert capture.segments == (segment,)
+    assert capture.session.manifest.owned_files == (segment.name,)
+
+
+def test_stop_uses_drained_stderr_in_capture_error(tmp_path: Path) -> None:
+    process = _Process(returncode=2)
+    process.stderr = iter(["нет прав на интерфейс\n"])
+    capture = started_capture(tmp_path, process=process)
+
+    with pytest.raises(CaptureError, match="нет прав на интерфейс"):
         capture.stop()
 
     assert capture.state is CaptureState.FAILED
@@ -420,6 +453,50 @@ def test_collect_closed_segments_reads_all_available_lines_without_eof(
     assert capture.segments == (first, second)
 
 
+def test_collect_closed_segments_drains_early_failed_process(tmp_path: Path) -> None:
+    process = _Process(returncode=3, running=False)
+    capture = started_capture(tmp_path, process=process)
+    assert capture.session is not None
+    segment = capture.session.path / "segment_final.pcapng"
+    segment.write_bytes(b"final")
+    process.stdout = iter([f"{segment}\n"])
+    process.stderr = iter(["dumpcap потерял интерфейс\n"])
+
+    with pytest.raises(CaptureError, match="dumpcap потерял интерфейс"):
+        capture.collect_closed_segments()
+
+    assert capture.state is CaptureState.FAILED
+    assert capture.segments == (segment,)
+
+
+def test_collect_closed_segments_does_not_block_on_stream_without_fileno(
+    tmp_path: Path,
+) -> None:
+    release = threading.Event()
+
+    def blocking_stdout():
+        release.wait()
+        return
+        yield ""
+
+    capture = started_capture(tmp_path)
+    assert capture._process is not None
+    capture._process.stdout = blocking_stdout()
+    completed_collection = threading.Event()
+
+    def collect() -> None:
+        capture.collect_closed_segments()
+        completed_collection.set()
+
+    thread = threading.Thread(target=collect)
+    thread.start()
+    try:
+        assert completed_collection.wait(timeout=0.1)
+    finally:
+        release.set()
+        thread.join()
+
+
 def test_save_merges_segments_to_new_destination(tmp_path: Path) -> None:
     capture = stopped_capture_with_segment(tmp_path)
     destination = tmp_path / "saved.pcapng"
@@ -464,6 +541,58 @@ def test_save_does_not_overwrite_existing_file(tmp_path: Path) -> None:
     assert destination.read_bytes() == b"existing"
 
 
+def test_save_does_not_overwrite_or_remove_existing_part(tmp_path: Path) -> None:
+    capture = stopped_capture_with_segment(tmp_path)
+    destination = tmp_path / "saved.pcapng"
+    temporary = tmp_path / "saved.pcapng.part"
+    temporary.write_bytes(b"user data")
+
+    with pytest.raises(CaptureError, match="part|временн"):
+        capture.save(destination)
+
+    assert temporary.read_bytes() == b"user data"
+    assert not destination.exists()
+
+
+def test_save_does_not_follow_or_remove_existing_part_link(tmp_path: Path) -> None:
+    capture = stopped_capture_with_segment(tmp_path)
+    destination = tmp_path / "saved.pcapng"
+    temporary = tmp_path / "saved.pcapng.part"
+    target = tmp_path / "link-target.pcapng"
+    temporary.symlink_to(target)
+
+    with pytest.raises(CaptureError, match="part|временн"):
+        capture.save(destination)
+
+    assert temporary.is_symlink()
+    assert not target.exists()
+    assert not destination.exists()
+
+
+def test_save_rejects_part_replaced_with_link_by_mergecap(tmp_path: Path) -> None:
+    destination = tmp_path / "saved.pcapng"
+    temporary = tmp_path / "saved.pcapng.part"
+    target = tmp_path / "untrusted.pcapng"
+    target.write_bytes(b"untrusted")
+
+    def mergecap(
+        command: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        Path(command[2]).unlink()
+        Path(command[2]).symlink_to(target)
+        return completed()
+
+    capture = stopped_capture_with_segment(tmp_path)
+    capture._run = mergecap
+
+    with pytest.raises(CaptureError, match="part|временн"):
+        capture.save(destination)
+
+    assert temporary.is_symlink()
+    assert target.read_bytes() == b"untrusted"
+    assert not destination.exists()
+
+
 def test_save_does_not_overwrite_destination_created_while_merging(
     tmp_path: Path,
 ) -> None:
@@ -491,6 +620,62 @@ def test_save_requires_confirmed_segment(tmp_path: Path) -> None:
 
     with pytest.raises(CaptureError, match="сегмент"):
         capture.save(tmp_path / "saved.pcapng")
+
+
+def test_save_is_available_after_limit_for_confirmed_segments(tmp_path: Path) -> None:
+    capture = started_capture(tmp_path, max_size=1)
+    assert capture.session is not None
+    assert capture._process is not None
+    segment = capture.session.path / "segment_limit.pcapng"
+    segment.write_bytes(b"over limit")
+    capture._process.stdout = iter([f"{segment}\n"])
+
+    def mergecap(
+        command: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        Path(command[2]).write_bytes(b"merged")
+        return completed()
+
+    capture._run = mergecap
+
+    capture.collect_closed_segments()
+
+    assert capture.state is CaptureState.LIMIT_REACHED
+    assert capture.save(tmp_path / "saved.pcapng").read_bytes() == b"merged"
+
+
+def test_save_is_available_after_failure_for_confirmed_segments(
+    tmp_path: Path,
+) -> None:
+    process = _Process(returncode=7)
+
+    def mergecap(
+        command: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        Path(command[2]).write_bytes(b"merged")
+        return completed()
+
+    capture = CaptureSession(
+        Path("/opt/bin/dumpcap"),
+        Path("/opt/bin/mergecap"),
+        "en0",
+        storage=SessionStorage(cache_root=tmp_path, pid=123),
+        popen=recording_popen([], process),
+        run=mergecap,
+    )
+    capture.start()
+    assert capture.session is not None
+    first = capture.session.path / "segment_confirmed.pcapng"
+    first.write_bytes(b"confirmed")
+    process.stdout = iter([f"{first}\n"])
+    capture.collect_closed_segments()
+    process.stderr = iter(["ошибка dumpcap\n"])
+
+    with pytest.raises(CaptureError, match="ошибка dumpcap"):
+        capture.stop()
+
+    assert capture.state is CaptureState.FAILED
+    assert capture.save(tmp_path / "saved.pcapng").read_bytes() == b"merged"
 
 
 def test_save_resumes_running_capture_only_after_successful_snapshot(
@@ -581,6 +766,21 @@ def test_close_closes_owned_session_and_marks_capture_closed(tmp_path: Path) -> 
     capture = stopped_capture_with_segment(tmp_path)
     assert capture.session is not None
     session_path = capture.session.path
+
+    assert capture.close() is True
+
+    assert capture.state is CaptureState.CLOSED
+    assert not session_path.exists()
+
+
+def test_close_registers_final_segment_before_removing_session(tmp_path: Path) -> None:
+    capture = started_capture(tmp_path)
+    assert capture.session is not None
+    assert capture._process is not None
+    session_path = capture.session.path
+    segment = session_path / "segment_final.pcapng"
+    segment.write_bytes(b"final")
+    capture._process.stdout = iter([f"{segment}\n"])
 
     assert capture.close() is True
 

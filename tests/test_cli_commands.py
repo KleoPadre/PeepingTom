@@ -3,7 +3,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from wispwire.capture import CaptureError
+from wispwire.capture import CaptureError, CaptureState
 from wispwire.cli import app
 from wispwire.diagnostics import DoctorReport
 from wispwire.packets import PacketDetails, PacketSummary
@@ -80,6 +80,8 @@ def test_interfaces_prints_numbered_available_interfaces(monkeypatch) -> None:
 
 def fake_capture_session(events: list[str]):
     class FakeCaptureSession:
+        state = CaptureState.STOPPED
+
         def __init__(
             self, _dumpcap_path, _mergecap_path, interface, *, storage
         ) -> None:
@@ -88,9 +90,14 @@ def fake_capture_session(events: list[str]):
 
         def start(self) -> None:
             events.append(f"start:{self.interface}")
+            self.state = CaptureState.RUNNING
+
+        def collect_closed_segments(self) -> tuple[Path, ...]:
+            return ()
 
         def close(self) -> bool:
             events.append("close")
+            self.state = CaptureState.CLOSED
             return True
 
     return FakeCaptureSession
@@ -176,6 +183,82 @@ def test_capture_keeps_session_until_keyboard_interrupt(monkeypatch) -> None:
     assert "Ctrl-C" in result.output
 
 
+def test_capture_collects_segments_until_limit_is_reached(monkeypatch) -> None:
+    events: list[str] = []
+
+    class LimitedCaptureSession:
+        state = CaptureState.STOPPED
+
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def start(self) -> None:
+            events.append("start")
+            self.state = CaptureState.RUNNING
+
+        def collect_closed_segments(self) -> tuple[Path, ...]:
+            events.append("collect")
+            self.state = CaptureState.LIMIT_REACHED
+            return ()
+
+        def close(self) -> bool:
+            events.append("close")
+            self.state = CaptureState.CLOSED
+            return True
+
+    monkeypatch.setattr("wispwire.cli.inspect_tool", available_capture_tools)
+    monkeypatch.setattr("wispwire.cli.list_interfaces", lambda: ("en0",))
+    monkeypatch.setattr("wispwire.cli.CaptureSession", LimitedCaptureSession)
+    monkeypatch.setattr(
+        "wispwire.cli.sleep",
+        lambda _: (_ for _ in ()).throw(AssertionError("лишнее ожидание")),
+    )
+
+    result = CliRunner().invoke(app, ["capture", "--iface", "en0"])
+
+    assert result.exit_code == 0
+    assert events == ["start", "collect", "close"]
+    assert "лимит" in result.output
+
+
+def test_capture_reports_early_dumpcap_failure_and_closes_session(monkeypatch) -> None:
+    events: list[str] = []
+
+    class FailedCaptureSession:
+        state = CaptureState.STOPPED
+
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def start(self) -> None:
+            events.append("start")
+            self.state = CaptureState.RUNNING
+
+        def collect_closed_segments(self) -> tuple[Path, ...]:
+            events.append("collect")
+            self.state = CaptureState.FAILED
+            raise CaptureError("dumpcap потерял интерфейс")
+
+        def close(self) -> bool:
+            events.append("close")
+            self.state = CaptureState.CLOSED
+            return True
+
+    monkeypatch.setattr("wispwire.cli.inspect_tool", available_capture_tools)
+    monkeypatch.setattr("wispwire.cli.list_interfaces", lambda: ("en0",))
+    monkeypatch.setattr("wispwire.cli.CaptureSession", FailedCaptureSession)
+    monkeypatch.setattr(
+        "wispwire.cli.sleep",
+        lambda _: (_ for _ in ()).throw(AssertionError("сегменты не собраны")),
+    )
+
+    result = CliRunner().invoke(app, ["capture", "--iface", "en0"])
+
+    assert result.exit_code == 1
+    assert events == ["start", "collect", "close"]
+    assert "dumpcap потерял интерфейс" in result.output
+
+
 def test_capture_reports_session_start_error(monkeypatch) -> None:
     events: list[str] = []
 
@@ -198,7 +281,7 @@ def test_capture_reports_session_start_error(monkeypatch) -> None:
     result = CliRunner().invoke(app, ["capture", "--iface", "en0"])
 
     assert result.exit_code == 1
-    assert "Не удалось запустить live-захват: нет прав" in result.output
+    assert "Ошибка live-захвата: нет прав" in result.output
     assert events == ["start", "close"]
 
 
