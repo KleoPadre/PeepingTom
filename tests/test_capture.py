@@ -17,7 +17,7 @@ from wispwire.capture import (
     build_dumpcap_command,
     build_mergecap_command,
 )
-from wispwire.sessions import SessionStorage
+from wispwire.sessions import Session, SessionStorage
 
 
 class _Process:
@@ -430,6 +430,29 @@ def test_save_merges_segments_to_new_destination(tmp_path: Path) -> None:
     assert not (tmp_path / "saved.pcapng.part").exists()
 
 
+def test_save_runs_mergecap_without_shell(tmp_path: Path) -> None:
+    capture = stopped_capture_with_segment(tmp_path)
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def mergecap(
+        command: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append(((command,), kwargs))
+        Path(command[2]).write_bytes(b"merged")
+        return completed()
+
+    capture._run = mergecap
+
+    capture.save(tmp_path / "saved.pcapng")
+
+    assert calls[0][1] == {
+        "capture_output": True,
+        "text": True,
+        "check": False,
+        "shell": False,
+    }
+
+
 def test_save_does_not_overwrite_existing_file(tmp_path: Path) -> None:
     capture = stopped_capture_with_segment(tmp_path)
     destination = tmp_path / "saved.pcapng"
@@ -571,3 +594,63 @@ def test_close_does_not_remove_session_when_storage_rejects_it(tmp_path: Path) -
 
     with pytest.raises(CaptureError, match="не удалось"):
         capture.close()
+
+
+def test_restart_terminates_failed_process_before_closing_session(
+    tmp_path: Path,
+) -> None:
+    processes = [_Process(), _Process()]
+    capture = CaptureSession(
+        Path("/opt/bin/dumpcap"),
+        Path("/opt/bin/mergecap"),
+        "en0",
+        storage=SessionStorage(cache_root=tmp_path, pid=123),
+        popen=lambda *_args, **_kwargs: processes.pop(0),
+    )
+    capture.start()
+    assert capture._process is not None
+    failed_process = capture._process
+    assert capture.session is not None
+    outside = tmp_path / "outside.pcapng"
+    outside.write_bytes(b"keep")
+    failed_process.stdout = iter([f"{outside}\n"])
+
+    with pytest.raises(CaptureError, match="сессии"):
+        capture.collect_closed_segments()
+
+    original_close_session = capture.storage.close_session
+
+    def close_session(session: Session) -> bool:
+        assert failed_process.terminated is True
+        assert failed_process.waited is True
+        return original_close_session(session)
+
+    capture.storage.close_session = close_session
+    capture.restart()
+
+    assert capture.state is CaptureState.RUNNING
+
+
+def test_close_terminates_failed_process_before_closing_session(tmp_path: Path) -> None:
+    capture = started_capture(tmp_path)
+    assert capture._process is not None
+    failed_process = capture._process
+    assert capture.session is not None
+    outside = tmp_path / "outside.pcapng"
+    outside.write_bytes(b"keep")
+    failed_process.stdout = iter([f"{outside}\n"])
+
+    with pytest.raises(CaptureError, match="сессии"):
+        capture.collect_closed_segments()
+
+    original_close_session = capture.storage.close_session
+
+    def close_session(session: Session) -> bool:
+        assert failed_process.terminated is True
+        assert failed_process.waited is True
+        return original_close_session(session)
+
+    capture.storage.close_session = close_session
+    capture.close()
+
+    assert capture.state is CaptureState.CLOSED

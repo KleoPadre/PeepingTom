@@ -171,13 +171,11 @@ class CaptureSession:
         if self.state is not CaptureState.RUNNING or self._process is None:
             raise CaptureError("остановить можно только запущенный захват")
 
-        self._process.terminate()
-        returncode = self._process.wait()
+        returncode = self._terminate_existing_process()
+        assert returncode is not None
         if returncode != 0:
             self.state = CaptureState.FAILED
             raise CaptureError(f"dumpcap завершился с кодом {returncode}")
-        if self._stdout_reader is not None:
-            self._stdout_reader.join()
         self.state = CaptureState.STOPPED
 
     def save(self, destination: Path) -> Path:
@@ -201,6 +199,7 @@ class CaptureSession:
                 capture_output=True,
                 text=True,
                 check=False,
+                shell=False,
             )
             if result.returncode != 0:
                 error = result.stderr.strip() or (
@@ -229,6 +228,7 @@ class CaptureSession:
             CaptureState.LIMIT_REACHED,
         ):
             raise CaptureError("перезапуск доступен только остановленному захвату")
+        self._terminate_existing_process()
         if self.session is not None and not self.storage.close_session(self.session):
             raise CaptureError("не удалось безопасно закрыть сессию захвата")
 
@@ -243,8 +243,7 @@ class CaptureSession:
         """Останавливает захват и закрывает только его собственную сессию."""
         if self.state is CaptureState.CLOSED:
             return True
-        if self.state is CaptureState.RUNNING:
-            self.stop()
+        self._terminate_existing_process()
         if self.session is not None and not self.storage.close_session(self.session):
             raise CaptureError("не удалось безопасно закрыть сессию захвата")
 
@@ -254,6 +253,16 @@ class CaptureSession:
         self._segments.clear()
         self.state = CaptureState.CLOSED
         return True
+
+    def _terminate_existing_process(self) -> int | None:
+        """Завершает текущий процесс независимо от состояния захвата."""
+        if self._process is None:
+            return None
+        self._process.terminate()
+        returncode = self._process.wait()
+        if self._stdout_reader is not None:
+            self._stdout_reader.join()
+        return returncode
 
     def _is_safe_segment(self, segment: Path) -> bool:
         """Проверяет, что сегмент — обычный файл внутри текущей сессии."""
