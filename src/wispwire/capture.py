@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import queue
 import subprocess
-from collections.abc import Callable
+import threading
+from collections.abc import Callable, Iterable
 from enum import StrEnum
 from pathlib import Path
+from select import select
 
 from wispwire.sessions import Session, SessionSafetyError, SessionStorage
 
@@ -75,6 +78,8 @@ class CaptureSession:
         self._popen = popen
         self._run = run
         self._process: subprocess.Popen[str] | None = None
+        self._stdout_lines: queue.SimpleQueue[str] = queue.SimpleQueue()
+        self._stdout_reader: threading.Thread | None = None
         self.session: Session | None = None
         self._segments: list[Path] = []
         self.state = CaptureState.STOPPED
@@ -98,6 +103,7 @@ class CaptureSession:
         except OSError as error:
             self.state = CaptureState.FAILED
             raise CaptureError("не удалось запустить dumpcap") from error
+        self._start_stdout_reader()
         self.state = CaptureState.RUNNING
 
     @property
@@ -107,13 +113,15 @@ class CaptureSession:
 
     def collect_closed_segments(self) -> tuple[Path, ...]:
         """Регистрирует безопасно завершённые dumpcap сегменты из stdout."""
-        if self.state is not CaptureState.RUNNING or self._process is None:
+        if self.state not in (CaptureState.RUNNING, CaptureState.STOPPED):
             raise CaptureError("читать сегменты можно только у запущенного захвата")
+        if self._process is None:
+            raise CaptureError("для захвата недоступен процесс")
         if self.session is None or self._process.stdout is None:
             self.state = CaptureState.FAILED
             raise CaptureError("для захвата недоступна сессия или stdout")
 
-        for line in self._process.stdout:
+        for line in self._closed_segment_lines():
             segment = Path(line.strip())
             if not self._is_safe_segment(segment):
                 self.state = CaptureState.FAILED
@@ -155,6 +163,7 @@ class CaptureSession:
         except OSError as error:
             self.state = CaptureState.FAILED
             raise CaptureError("не удалось запустить dumpcap") from error
+        self._start_stdout_reader()
         self.state = CaptureState.RUNNING
 
     def stop(self) -> None:
@@ -167,6 +176,8 @@ class CaptureSession:
         if returncode != 0:
             self.state = CaptureState.FAILED
             raise CaptureError(f"dumpcap завершился с кодом {returncode}")
+        if self._stdout_reader is not None:
+            self._stdout_reader.join()
         self.state = CaptureState.STOPPED
 
     def _is_safe_segment(self, segment: Path) -> bool:
@@ -174,6 +185,68 @@ class CaptureSession:
         assert self.session is not None
         try:
             segment.resolve().relative_to(self.session.path.resolve())
-        except ValueError:
+        except (OSError, ValueError):
             return False
-        return segment.exists() and not segment.is_symlink() and segment.is_file()
+        return (
+            segment.exists()
+            and not segment.is_symlink()
+            and segment.is_file()
+            and segment.stat().st_nlink == 1
+        )
+
+    def _closed_segment_lines(self) -> Iterable[str]:
+        """Возвращает доступные строки stdout, не блокируя работающий захват."""
+        assert self._process is not None
+        assert self._process.stdout is not None
+        if self._stdout_reader is not None:
+            return self._queued_stdout_lines()
+        stdout = self._process.stdout
+        if self.state is CaptureState.STOPPED:
+            return stdout
+        try:
+            stdout.fileno()
+        except (AttributeError, OSError):
+            return stdout
+
+        lines: list[str] = []
+        while select((stdout,), (), (), 0)[0]:
+            line = stdout.readline()
+            if not line:
+                break
+            lines.append(line)
+        return lines
+
+    def _start_stdout_reader(self) -> None:
+        """Запускает фоновое чтение stdout настоящего процесса dumpcap."""
+        assert self._process is not None
+        stdout = self._process.stdout
+        if stdout is None:
+            return
+        try:
+            stdout.fileno()
+        except (AttributeError, OSError):
+            return
+        self._stdout_lines = queue.SimpleQueue()
+        self._stdout_reader = threading.Thread(
+            target=self._read_stdout,
+            args=(stdout,),
+            daemon=True,
+        )
+        self._stdout_reader.start()
+
+    def _read_stdout(self, stdout: Iterable[str]) -> None:
+        """Передаёт строки stdout в очередь, не блокируя вызывающий код."""
+        try:
+            for line in stdout:
+                self._stdout_lines.put(line)
+        except (OSError, ValueError):
+            return
+
+    def _queued_stdout_lines(self) -> tuple[str, ...]:
+        """Извлекает уже полученные строки stdout без ожидания."""
+        lines: list[str] = []
+        while True:
+            try:
+                lines.append(self._stdout_lines.get_nowait())
+            except queue.Empty:
+                return tuple(lines)
