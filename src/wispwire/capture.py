@@ -7,7 +7,7 @@ from collections.abc import Callable
 from enum import StrEnum
 from pathlib import Path
 
-from wispwire.sessions import Session, SessionStorage
+from wispwire.sessions import Session, SessionSafetyError, SessionStorage
 
 
 class CaptureState(StrEnum):
@@ -76,6 +76,7 @@ class CaptureSession:
         self._run = run
         self._process: subprocess.Popen[str] | None = None
         self.session: Session | None = None
+        self._segments: list[Path] = []
         self.state = CaptureState.STOPPED
 
     def start(self) -> None:
@@ -84,6 +85,63 @@ class CaptureSession:
             raise CaptureError("захват можно запустить только из исходного состояния")
 
         self.session = self.storage.create_session()
+        command = build_dumpcap_command(
+            self.dumpcap_path, self.interface, self.session.path / "segment"
+        )
+        try:
+            self._process = self._popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        except OSError as error:
+            self.state = CaptureState.FAILED
+            raise CaptureError("не удалось запустить dumpcap") from error
+        self.state = CaptureState.RUNNING
+
+    @property
+    def segments(self) -> tuple[Path, ...]:
+        """Возвращает подтверждённые закрытые сегменты захвата."""
+        return tuple(self._segments)
+
+    def collect_closed_segments(self) -> tuple[Path, ...]:
+        """Регистрирует безопасно завершённые dumpcap сегменты из stdout."""
+        if self.state is not CaptureState.RUNNING or self._process is None:
+            raise CaptureError("читать сегменты можно только у запущенного захвата")
+        if self.session is None or self._process.stdout is None:
+            self.state = CaptureState.FAILED
+            raise CaptureError("для захвата недоступна сессия или stdout")
+
+        for line in self._process.stdout:
+            segment = Path(line.strip())
+            if not self._is_safe_segment(segment):
+                self.state = CaptureState.FAILED
+                raise CaptureError("сегмент выходит за пределы сессии или небезопасен")
+            if segment in self._segments:
+                continue
+            try:
+                self.session = self.storage.register_file(self.session, segment)
+                size = self.storage.session_size(self.session)
+            except (OSError, SessionSafetyError) as error:
+                self.state = CaptureState.FAILED
+                raise CaptureError(
+                    "не удалось безопасно зарегистрировать сегмент"
+                ) from error
+            self._segments.append(segment)
+            if size > self.max_size:
+                self.stop()
+                self.state = CaptureState.LIMIT_REACHED
+                break
+        return self.segments
+
+    def continue_capture(self) -> None:
+        """Продолжает остановленный захват в уже созданной сессии."""
+        if self.state is CaptureState.LIMIT_REACHED:
+            raise CaptureError("нельзя продолжить захват: достигнут лимит размера")
+        if self.state is not CaptureState.STOPPED or self.session is None:
+            raise CaptureError("продолжить можно только остановленный захват")
+
         command = build_dumpcap_command(
             self.dumpcap_path, self.interface, self.session.path / "segment"
         )
@@ -110,3 +168,12 @@ class CaptureSession:
             self.state = CaptureState.FAILED
             raise CaptureError(f"dumpcap завершился с кодом {returncode}")
         self.state = CaptureState.STOPPED
+
+    def _is_safe_segment(self, segment: Path) -> bool:
+        """Проверяет, что сегмент — обычный файл внутри текущей сессии."""
+        assert self.session is not None
+        try:
+            segment.resolve().relative_to(self.session.path.resolve())
+        except ValueError:
+            return False
+        return segment.exists() and not segment.is_symlink() and segment.is_file()

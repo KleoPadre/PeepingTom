@@ -31,6 +31,19 @@ class _Process:
         return self.returncode
 
 
+def started_capture(tmp_path: Path, *, max_size: int = 1_073_741_824) -> CaptureSession:
+    capture = CaptureSession(
+        Path("/opt/bin/dumpcap"),
+        Path("/opt/bin/mergecap"),
+        "en0",
+        storage=SessionStorage(cache_root=tmp_path, pid=123),
+        max_size=max_size,
+        popen=recording_popen([]),
+    )
+    capture.start()
+    return capture
+
+
 def recording_popen(
     calls: list[tuple[tuple[object, ...], dict[str, object]]],
     process: _Process | None = None,
@@ -152,3 +165,78 @@ def test_stop_marks_capture_failed_when_dumpcap_exits_with_error(
         capture.stop()
 
     assert capture.state is CaptureState.FAILED
+
+
+def test_collect_closed_segment_registers_only_regular_file(tmp_path: Path) -> None:
+    capture = started_capture(tmp_path)
+    assert capture.session is not None
+    assert capture._process is not None
+    segment = capture.session.path / "segment_00001_20260902000000.pcapng"
+    segment.write_bytes(b"pcapng")
+    capture._process.stdout = iter([f"{segment}\n"])
+
+    capture.collect_closed_segments()
+
+    assert capture.segments == (segment,)
+    assert capture.session.manifest.owned_files == (segment.name,)
+
+
+def test_limit_stops_capture_and_blocks_continue(tmp_path: Path) -> None:
+    capture = started_capture(tmp_path, max_size=1)
+    assert capture.session is not None
+    assert capture._process is not None
+    segment = capture.session.path / "segment_00001_20260902000000.pcapng"
+    segment.write_bytes(b"xx")
+    capture._process.stdout = iter([f"{segment}\n"])
+
+    capture.collect_closed_segments()
+
+    assert capture.state is CaptureState.LIMIT_REACHED
+    with pytest.raises(CaptureError, match="лимит"):
+        capture.continue_capture()
+
+
+def test_collect_closed_segment_rejects_path_outside_session(tmp_path: Path) -> None:
+    capture = started_capture(tmp_path)
+    assert capture._process is not None
+    outside = tmp_path / "outside.pcapng"
+    outside.write_bytes(b"keep")
+    capture._process.stdout = iter([f"{outside}\n"])
+
+    with pytest.raises(CaptureError, match="сессии"):
+        capture.collect_closed_segments()
+
+    assert outside.read_bytes() == b"keep"
+    assert capture.state is CaptureState.FAILED
+
+
+def test_collect_closed_segment_rejects_path_escaping_session(tmp_path: Path) -> None:
+    capture = started_capture(tmp_path)
+    assert capture.session is not None
+    assert capture._process is not None
+    outside = tmp_path / "outside.pcapng"
+    outside.write_bytes(b"keep")
+    escaped = capture.session.path / ".." / outside.name
+    capture._process.stdout = iter([f"{escaped}\n"])
+
+    with pytest.raises(CaptureError, match="сессии"):
+        capture.collect_closed_segments()
+
+    assert outside.read_bytes() == b"keep"
+    assert capture.state is CaptureState.FAILED
+
+
+def test_continue_keeps_confirmed_segment_history(tmp_path: Path) -> None:
+    capture = started_capture(tmp_path)
+    assert capture.session is not None
+    assert capture._process is not None
+    segment = capture.session.path / "segment_00001_20260902000000.pcapng"
+    segment.write_bytes(b"pcapng")
+    capture._process.stdout = iter([f"{segment}\n"])
+    capture.collect_closed_segments()
+    capture.stop()
+
+    capture.continue_capture()
+
+    assert capture.state is CaptureState.RUNNING
+    assert len(capture.segments) == 1
