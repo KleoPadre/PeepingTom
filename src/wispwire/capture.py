@@ -180,6 +180,81 @@ class CaptureSession:
             self._stdout_reader.join()
         self.state = CaptureState.STOPPED
 
+    def save(self, destination: Path) -> Path:
+        """Сохраняет подтверждённые сегменты в новый файл PCAPNG."""
+        destination = Path(destination)
+        if destination.exists():
+            raise CaptureError("файл назначения уже существует")
+
+        was_running = self.state is CaptureState.RUNNING
+        if was_running:
+            self.stop()
+        if self._process is not None and self._process.stdout is not None:
+            self.collect_closed_segments()
+        if not self._segments:
+            raise CaptureError("для сохранения нужен хотя бы один закрытый сегмент")
+
+        temporary = destination.with_name(f"{destination.name}.part")
+        try:
+            result = self._run(
+                build_mergecap_command(self.mergecap_path, temporary, self.segments),
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if result.returncode != 0:
+                error = result.stderr.strip() or (
+                    f"mergecap завершился с кодом {result.returncode}"
+                )
+                raise CaptureError(error)
+            destination.hardlink_to(temporary)
+        except FileExistsError as error:
+            raise CaptureError("файл назначения уже существует") from error
+        except OSError as error:
+            raise CaptureError("не удалось сохранить снимок захвата") from error
+        except CaptureError:
+            raise
+        finally:
+            temporary.unlink(missing_ok=True)
+
+        if was_running:
+            self.continue_capture()
+        return destination
+
+    def restart(self) -> None:
+        """Закрывает текущую сессию и запускает новую."""
+        if self.state not in (
+            CaptureState.STOPPED,
+            CaptureState.FAILED,
+            CaptureState.LIMIT_REACHED,
+        ):
+            raise CaptureError("перезапуск доступен только остановленному захвату")
+        if self.session is not None and not self.storage.close_session(self.session):
+            raise CaptureError("не удалось безопасно закрыть сессию захвата")
+
+        self._process = None
+        self._stdout_reader = None
+        self.session = None
+        self._segments.clear()
+        self.state = CaptureState.STOPPED
+        self.start()
+
+    def close(self) -> bool:
+        """Останавливает захват и закрывает только его собственную сессию."""
+        if self.state is CaptureState.CLOSED:
+            return True
+        if self.state is CaptureState.RUNNING:
+            self.stop()
+        if self.session is not None and not self.storage.close_session(self.session):
+            raise CaptureError("не удалось безопасно закрыть сессию захвата")
+
+        self._process = None
+        self._stdout_reader = None
+        self.session = None
+        self._segments.clear()
+        self.state = CaptureState.CLOSED
+        return True
+
     def _is_safe_segment(self, segment: Path) -> bool:
         """Проверяет, что сегмент — обычный файл внутри текущей сессии."""
         assert self.session is not None
