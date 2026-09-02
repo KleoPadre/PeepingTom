@@ -3,6 +3,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
+from wispwire.capture import CaptureError
 from wispwire.cli import app
 from wispwire.diagnostics import DoctorReport
 from wispwire.packets import PacketDetails, PacketSummary
@@ -75,6 +76,114 @@ def test_interfaces_prints_numbered_available_interfaces(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "1. en0" in result.stdout
     assert "2. lo0" in result.stdout
+
+
+def fake_capture_session(started: list[str]):
+    class FakeCaptureSession:
+        def __init__(
+            self, _dumpcap_path, _mergecap_path, interface, *, storage
+        ) -> None:
+            self.interface = interface
+            self.storage = storage
+
+        def start(self) -> None:
+            started.append(self.interface)
+
+    return FakeCaptureSession
+
+
+def available_capture_tools(name: str) -> ToolStatus:
+    return ToolStatus(name, Path(f"/opt/bin/{name}"), "4.4.0", None)
+
+
+def test_capture_reports_missing_dumpcap_without_creating_session(monkeypatch) -> None:
+    constructed: list[str] = []
+
+    def unexpected_capture_session(*_args, **_kwargs) -> None:
+        constructed.append("создана")
+
+    monkeypatch.setattr(
+        "wispwire.cli.inspect_tool",
+        lambda name: ToolStatus(name, None, None, "не найден"),
+    )
+    monkeypatch.setattr("wispwire.cli.CaptureSession", unexpected_capture_session)
+
+    result = CliRunner().invoke(app, ["capture", "--iface", "en0"])
+
+    assert result.exit_code == 1
+    assert "dumpcap недоступен" in result.output
+    assert constructed == []
+
+
+def test_capture_reports_missing_mergecap_without_creating_session(monkeypatch) -> None:
+    constructed: list[str] = []
+
+    def inspect(name: str) -> ToolStatus:
+        path = Path(f"/opt/bin/{name}") if name == "dumpcap" else None
+        error = None if path is not None else "не найден"
+        return ToolStatus(name, path, "4.4.0" if path else None, error)
+
+    def unexpected_capture_session(*_args, **_kwargs) -> None:
+        constructed.append("создана")
+
+    monkeypatch.setattr("wispwire.cli.inspect_tool", inspect)
+    monkeypatch.setattr("wispwire.cli.CaptureSession", unexpected_capture_session)
+
+    result = CliRunner().invoke(app, ["capture", "--iface", "en0"])
+
+    assert result.exit_code == 1
+    assert "mergecap недоступен" in result.output
+    assert constructed == []
+
+
+def test_capture_rejects_unknown_interface_without_creating_session(
+    monkeypatch,
+) -> None:
+    constructed: list[str] = []
+
+    def unexpected_capture_session(*_args, **_kwargs) -> None:
+        constructed.append("создана")
+
+    monkeypatch.setattr("wispwire.cli.inspect_tool", available_capture_tools)
+    monkeypatch.setattr("wispwire.cli.list_interfaces", lambda: ("en0",))
+    monkeypatch.setattr("wispwire.cli.CaptureSession", unexpected_capture_session)
+
+    result = CliRunner().invoke(app, ["capture", "--iface", "en1"])
+
+    assert result.exit_code == 2
+    assert "Интерфейс en1 недоступен" in result.output
+    assert constructed == []
+
+
+def test_capture_starts_session_for_known_interface(monkeypatch) -> None:
+    started: list[str] = []
+    monkeypatch.setattr("wispwire.cli.list_interfaces", lambda: ("en0",))
+    monkeypatch.setattr("wispwire.cli.CaptureSession", fake_capture_session(started))
+    monkeypatch.setattr("wispwire.cli.inspect_tool", available_capture_tools)
+
+    result = CliRunner().invoke(app, ["capture", "--iface", "en0"])
+
+    assert result.exit_code == 0
+    assert started == ["en0"]
+    assert "Live-захват запущен" in result.output
+
+
+def test_capture_reports_session_start_error(monkeypatch) -> None:
+    class FailingCaptureSession:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def start(self) -> None:
+            raise CaptureError("нет прав")
+
+    monkeypatch.setattr("wispwire.cli.inspect_tool", available_capture_tools)
+    monkeypatch.setattr("wispwire.cli.list_interfaces", lambda: ("en0",))
+    monkeypatch.setattr("wispwire.cli.CaptureSession", FailingCaptureSession)
+
+    result = CliRunner().invoke(app, ["capture", "--iface", "en0"])
+
+    assert result.exit_code == 1
+    assert "Не удалось запустить live-захват: нет прав" in result.output
 
 
 def packet() -> PacketSummary:

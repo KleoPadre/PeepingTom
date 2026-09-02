@@ -4,8 +4,10 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from wispwire.capture import CaptureError, CaptureSession
 from wispwire.diagnostics import collect_doctor_report, list_interfaces
 from wispwire.packets import PacketDetails, PacketSummary
+from wispwire.sessions import SessionStorage
 from wispwire.tshark import TsharkReadError, iter_packet_summaries, read_packet_details
 from wispwire.tui import WispWireApp
 from wispwire.wireshark import inspect_tool
@@ -62,6 +64,40 @@ def interfaces() -> None:
         return
 
     _print_interfaces(available_interfaces)
+
+
+@app.command()
+def capture(
+    interface: str = typer.Option(..., "--iface", help="Интерфейс для live-захвата."),
+) -> None:
+    """Запустить live-захват в программном слое."""
+    dumpcap = inspect_tool("dumpcap")
+    if dumpcap.path is None or dumpcap.error is not None:
+        console.print("dumpcap недоступен. Запустите `wispwire doctor` для проверки.")
+        raise typer.Exit(code=1)
+
+    mergecap = inspect_tool("mergecap")
+    if mergecap.path is None or mergecap.error is not None:
+        console.print("mergecap недоступен. Запустите `wispwire doctor` для проверки.")
+        raise typer.Exit(code=1)
+
+    if interface not in list_interfaces():
+        console.print(f"Интерфейс {interface} недоступен.")
+        raise typer.Exit(code=2)
+
+    session = CaptureSession(
+        dumpcap.path,
+        mergecap.path,
+        interface,
+        storage=SessionStorage(),
+    )
+    try:
+        session.start()
+    except CaptureError as error:
+        console.print(f"Не удалось запустить live-захват: {error}")
+        raise typer.Exit(code=1) from None
+
+    console.print(f"Live-захват запущен на интерфейсе {interface}.")
 
 
 @app.command()
