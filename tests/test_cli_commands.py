@@ -78,7 +78,7 @@ def test_interfaces_prints_numbered_available_interfaces(monkeypatch) -> None:
     assert "2. lo0" in result.stdout
 
 
-def fake_capture_session(started: list[str]):
+def fake_capture_session(events: list[str]):
     class FakeCaptureSession:
         def __init__(
             self, _dumpcap_path, _mergecap_path, interface, *, storage
@@ -87,7 +87,11 @@ def fake_capture_session(started: list[str]):
             self.storage = storage
 
         def start(self) -> None:
-            started.append(self.interface)
+            events.append(f"start:{self.interface}")
+
+        def close(self) -> bool:
+            events.append("close")
+            return True
 
     return FakeCaptureSession
 
@@ -155,26 +159,37 @@ def test_capture_rejects_unknown_interface_without_creating_session(
     assert constructed == []
 
 
-def test_capture_starts_session_for_known_interface(monkeypatch) -> None:
-    started: list[str] = []
+def test_capture_keeps_session_until_keyboard_interrupt(monkeypatch) -> None:
+    events: list[str] = []
     monkeypatch.setattr("wispwire.cli.list_interfaces", lambda: ("en0",))
-    monkeypatch.setattr("wispwire.cli.CaptureSession", fake_capture_session(started))
+    monkeypatch.setattr("wispwire.cli.CaptureSession", fake_capture_session(events))
     monkeypatch.setattr("wispwire.cli.inspect_tool", available_capture_tools)
+    monkeypatch.setattr(
+        "wispwire.cli.sleep", lambda _: (_ for _ in ()).throw(KeyboardInterrupt)
+    )
 
     result = CliRunner().invoke(app, ["capture", "--iface", "en0"])
 
     assert result.exit_code == 0
-    assert started == ["en0"]
+    assert events == ["start:en0", "close"]
     assert "Live-захват запущен" in result.output
+    assert "Ctrl-C" in result.output
 
 
 def test_capture_reports_session_start_error(monkeypatch) -> None:
+    events: list[str] = []
+
     class FailingCaptureSession:
         def __init__(self, *_args, **_kwargs) -> None:
             pass
 
         def start(self) -> None:
+            events.append("start")
             raise CaptureError("нет прав")
+
+        def close(self) -> bool:
+            events.append("close")
+            return True
 
     monkeypatch.setattr("wispwire.cli.inspect_tool", available_capture_tools)
     monkeypatch.setattr("wispwire.cli.list_interfaces", lambda: ("en0",))
@@ -184,6 +199,7 @@ def test_capture_reports_session_start_error(monkeypatch) -> None:
 
     assert result.exit_code == 1
     assert "Не удалось запустить live-захват: нет прав" in result.output
+    assert events == ["start", "close"]
 
 
 def packet() -> PacketSummary:

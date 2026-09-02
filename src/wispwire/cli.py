@@ -1,4 +1,5 @@
 from pathlib import Path
+from time import sleep
 
 import typer
 from rich.console import Console
@@ -93,11 +94,19 @@ def capture(
     )
     try:
         session.start()
+        console.print(
+            f"Live-захват запущен на интерфейсе {interface}. "
+            "Чтобы остановить захват, нажмите Ctrl-C."
+        )
+        while True:
+            sleep(1)
+    except KeyboardInterrupt:
+        console.print("Live-захват остановлен.")
     except CaptureError as error:
         console.print(f"Не удалось запустить live-захват: {error}")
         raise typer.Exit(code=1) from None
-
-    console.print(f"Live-захват запущен на интерфейсе {interface}.")
+    finally:
+        session.close()
 
 
 @app.command()
