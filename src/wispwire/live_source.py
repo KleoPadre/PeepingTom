@@ -78,10 +78,11 @@ class LivePacketSource:
             raise ValueError("Размер страницы должен быть положительным")
 
         display_filter = query.display_filter
+        has_display_filter = bool(display_filter.strip())
         info_query = query.info_query.strip()
         info_numbers = self._info_numbers(info_query)
 
-        if display_filter:
+        if has_display_filter:
             try:
                 packets = self._display_filtered_packets(display_filter)
             except TsharkReadError as error:

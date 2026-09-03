@@ -110,6 +110,34 @@ def test_live_source_passes_display_filter_to_tshark_unchanged(tmp_path: Path) -
         source.close()
 
 
+def test_live_source_uses_index_for_whitespace_only_display_filter(
+    tmp_path: Path,
+) -> None:
+    segment = tmp_path / "one.pcapng"
+    filters: list[str | None] = []
+
+    def iter_summaries(
+        _path: Path, _tshark: Path, _limit: int, display_filter: str | None = None
+    ) -> Iterator[PacketSummary]:
+        filters.append(display_filter)
+        return iter([packet(1)])
+
+    source = LivePacketSource(
+        Path("tshark"),
+        SessionStorage(cache_root=tmp_path / "sessions", pid=123),
+        iter_summaries=iter_summaries,
+    )
+    try:
+        source.ingest((segment,))
+
+        result = source.query(PacketQuery(display_filter="   ", limit=10))
+
+        assert result == PacketQueryResult((packet(1),), None)
+        assert filters == [None]
+    finally:
+        source.close()
+
+
 def test_live_source_keeps_index_after_display_filter_error(tmp_path: Path) -> None:
     segment = tmp_path / "one.pcapng"
 
