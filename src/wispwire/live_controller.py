@@ -20,6 +20,7 @@ class LivePacketsAdded:
     """Пакеты, добавленные за одну итерацию контроллера."""
 
     packets: tuple[PacketSummary, ...]
+    generation: int = 0
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,7 @@ class LiveStateChanged:
     state: CaptureState
     packets: int
     size: int
+    generation: int = 0
 
 
 @dataclass(frozen=True)
@@ -68,6 +70,7 @@ class LiveCaptureController:
         self._commands: queue.SimpleQueue[LiveCommand] = queue.SimpleQueue()
         self._events: queue.SimpleQueue[LiveEvent] = queue.SimpleQueue()
         self._thread: threading.Thread | None = None
+        self._generation = 0
 
     def start(self) -> None:
         """Запускает неблокирующий поток управления захватом."""
@@ -110,7 +113,9 @@ class LiveCaptureController:
                         segments = self._capture.collect_closed_segments()
                         packets = self._source.ingest(segments)
                         if packets:
-                            self._events.put(LivePacketsAdded(packets))
+                            self._events.put(
+                                LivePacketsAdded(packets, self._generation)
+                            )
                         self._publish_state()
                     except (CaptureError, OSError, TsharkReadError) as error:
                         self._fail(error)
@@ -143,6 +148,7 @@ class LiveCaptureController:
         elif command == "restart":
             self._capture.restart()
             self._source.reset()
+            self._generation += 1
         elif command == "save":
             destination = self._destination_factory()
             self._capture.save(destination)
@@ -160,6 +166,7 @@ class LiveCaptureController:
                 self._capture.state,
                 self._source.packet_count,
                 self._capture.confirmed_size,
+                self._generation,
             )
         )
 

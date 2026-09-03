@@ -237,6 +237,50 @@ def test_controller_resets_source_after_successful_restart() -> None:
     assert log.index("capture:restart") < log.index("source:reset")
 
 
+def test_controller_increments_generation_after_successful_restart(
+    tmp_path: Path,
+) -> None:
+    segments = (tmp_path / "one.pcapng",)
+    capture = FakeCapture(segments=segments)
+    source = FakeSource({segments: (packet(1),)})
+    controller = LiveCaptureController(capture, source, poll_interval=0.05)
+
+    controller.start()
+    try:
+        events_until(
+            controller,
+            lambda items: any(
+                isinstance(item, LiveStateChanged) and item.generation == 0
+                for item in items
+            ),
+        )
+        capture.state = CaptureState.STOPPED
+        controller.submit("restart")
+        events = events_until(
+            controller,
+            lambda items: (
+                any(
+                    isinstance(item, LiveStateChanged) and item.generation == 1
+                    for item in items
+                )
+                and any(
+                    isinstance(item, LivePacketsAdded) and item.generation == 1
+                    for item in items
+                )
+            ),
+        )
+    finally:
+        controller.submit("quit")
+        controller.join()
+
+    assert any(
+        isinstance(item, LiveStateChanged) and item.generation == 1 for item in events
+    )
+    assert any(
+        isinstance(item, LivePacketsAdded) and item.generation == 1 for item in events
+    )
+
+
 def test_controller_keeps_source_when_restart_fails() -> None:
     capture = FakeCapture()
     capture.restart_error = CaptureError("не удалось перезапустить захват")
