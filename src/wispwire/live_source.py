@@ -1,5 +1,6 @@
 """Источник пакетов подтверждённых сегментов live-захвата."""
 
+import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -39,6 +40,7 @@ class LivePacketSource:
         self._limit = limit
         self._iter_summaries = iter_summaries
         self._read_details = read_details
+        self._lock = threading.RLock()
         self._session, self._index = self._create_index()
         self._packets: dict[int, LivePacket] = {}
         self._seen_segments: set[Path] = set()
@@ -48,15 +50,21 @@ class LivePacketSource:
     @property
     def session_path(self) -> Path:
         """Возвращает путь собственной временной сессии."""
-        return self._session.path
+        with self._lock:
+            return self._session.path
 
     @property
     def packet_count(self) -> int:
         """Возвращает количество пакетов с глобальными номерами."""
-        return len(self._packets)
+        with self._lock:
+            return len(self._packets)
 
     def ingest(self, segments: tuple[Path, ...]) -> tuple[PacketSummary, ...]:
         """Добавляет ранее не обработанные подтверждённые сегменты."""
+        with self._lock:
+            return self._ingest(segments)
+
+    def _ingest(self, segments: tuple[Path, ...]) -> tuple[PacketSummary, ...]:
         added: list[PacketSummary] = []
         for segment in segments:
             if segment in self._seen_segments:
@@ -74,6 +82,10 @@ class LivePacketSource:
 
     def query(self, query: PacketQuery) -> PacketQueryResult:
         """Возвращает пересечение display filter и поиска по полю Info."""
+        with self._lock:
+            return self._query(query)
+
+    def _query(self, query: PacketQuery) -> PacketQueryResult:
         if query.limit < 1:
             raise ValueError("Размер страницы должен быть положительным")
 
@@ -98,13 +110,18 @@ class LivePacketSource:
 
     def read_details(self, global_number: int) -> PacketDetails:
         """Читает детали по локальному номеру кадра в исходном сегменте."""
-        packet = self._packets[global_number]
-        return self._read_details(
-            packet.segment_path, self._tshark_path, packet.frame_number
-        )
+        with self._lock:
+            packet = self._packets[global_number]
+            return self._read_details(
+                packet.segment_path, self._tshark_path, packet.frame_number
+            )
 
     def reset(self) -> None:
         """Очищает состояние после успешного перезапуска CaptureSession."""
+        with self._lock:
+            self._reset()
+
+    def _reset(self) -> None:
         if self._closed:
             return
         self._index.close()
@@ -116,6 +133,10 @@ class LivePacketSource:
 
     def close(self) -> None:
         """Закрывает индекс до закрытия только собственной временной сессии."""
+        with self._lock:
+            self._close()
+
+    def _close(self) -> None:
         if self._closed:
             return
         self._index.close()
@@ -125,7 +146,7 @@ class LivePacketSource:
     def _create_index(self) -> tuple[Session, PacketIndex]:
         session = self._storage.create_session()
         index_path = session.path / "packets.sqlite3"
-        index = PacketIndex(index_path)
+        index = PacketIndex(index_path, check_same_thread=False)
         session = self._storage.register_file(session, index_path)
         return session, index
 

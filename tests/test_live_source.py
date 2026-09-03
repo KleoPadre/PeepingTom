@@ -1,4 +1,6 @@
+import threading
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from wispwire.file_source import PacketQuery, PacketQueryResult
@@ -162,6 +164,48 @@ def test_live_source_keeps_index_after_display_filter_error(tmp_path: Path) -> N
             packet(1, "telegram"),
         )
     finally:
+        source.close()
+
+
+def test_live_source_serializes_access_from_background_threads(
+    tmp_path: Path,
+) -> None:
+    segment = tmp_path / "one.pcapng"
+    ingest_started = threading.Event()
+    release_ingest = threading.Event()
+    query_started = threading.Event()
+
+    def iter_summaries(
+        _path: Path, _tshark: Path, _limit: int, display_filter: str | None = None
+    ) -> Iterator[PacketSummary]:
+        if display_filter is None:
+            ingest_started.set()
+            assert release_ingest.wait(timeout=1)
+        return iter([packet(1)])
+
+    source = LivePacketSource(
+        Path("tshark"),
+        SessionStorage(cache_root=tmp_path / "sessions", pid=123),
+        iter_summaries=iter_summaries,
+    )
+
+    def query() -> PacketQueryResult:
+        query_started.set()
+        return source.query(PacketQuery(display_filter="dns", limit=10))
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            ingest = executor.submit(source.ingest, (segment,))
+            assert ingest_started.wait(timeout=1)
+            filtered = executor.submit(query)
+            assert query_started.wait(timeout=1)
+            assert not filtered.done()
+
+            release_ingest.set()
+            assert ingest.result(timeout=1) == (packet(1),)
+            assert filtered.result(timeout=1) == PacketQueryResult((packet(1),), None)
+    finally:
+        release_ingest.set()
         source.close()
 
 

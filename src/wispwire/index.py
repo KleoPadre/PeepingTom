@@ -122,13 +122,15 @@ class PacketIndex:
         self,
         path: Path,
         feature_check: Callable[[], SqliteFeatureStatus] = check_fts5_trigram,
+        *,
+        check_same_thread: bool = True,
     ) -> None:
         status = feature_check()
         if not status.available:
             raise PacketIndexUnavailableError(
                 status.error or "SQLite FTS5 trigram недоступен"
             )
-        self._connection = sqlite3.connect(path)
+        self._connection = sqlite3.connect(path, check_same_thread=check_same_thread)
         self._connection.row_factory = sqlite3.Row
         self._create_schema()
 

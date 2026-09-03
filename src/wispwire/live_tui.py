@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from typing import ClassVar
 
@@ -12,6 +13,7 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import BindingType
 from textual.containers import Container, VerticalScroll
+from textual.message import Message
 from textual.timer import Timer
 from textual.widgets import DataTable, Footer, Header, Input, Static
 
@@ -36,6 +38,32 @@ _STATE_LABELS = {
     CaptureState.FAILED: "ошибка",
     CaptureState.CLOSED: "закрыт",
 }
+
+
+class LiveQueryCompleted(Message):
+    """Результат фонового запроса пакетов."""
+
+    def __init__(self, generation: int, result: PacketQueryResult) -> None:
+        super().__init__()
+        self.generation = generation
+        self.result = result
+
+
+class LiveDetailsCompleted(Message):
+    """Результат фонового чтения подробностей пакета."""
+
+    def __init__(
+        self,
+        generation: int,
+        number: int,
+        details: PacketDetails | None,
+        error: str | None,
+    ) -> None:
+        super().__init__()
+        self.generation = generation
+        self.number = number
+        self.details = details
+        self.error = error
 
 
 class LiveCaptureApp(App[Path | None]):
@@ -77,12 +105,15 @@ class LiveCaptureApp(App[Path | None]):
         self._controller = controller
         self._query_packets = query_packets
         self._read_details = read_details
-        self._state = CaptureState.STOPPED
+        self._state: CaptureState | None = None
         self._all_packets: tuple[PacketSummary, ...] = ()
         self._packets: tuple[PacketSummary, ...] = ()
         self._pending_events: deque[LiveEvent] = deque()
         self._filter_timer: Timer | None = None
         self._details_packet_number: int | None = None
+        self._details_requested_number: int | None = None
+        self._query_generation = 0
+        self._details_generation = 0
         self.title = f"WispWire — live-захват {interface}"
 
     def compose(self) -> ComposeResult:
@@ -130,23 +161,30 @@ class LiveCaptureApp(App[Path | None]):
             self._show_details(self._packets[event.cursor_row])
 
     def action_stop_and_analyze(self) -> None:
+        if not self._state_is_known():
+            return
         if self._state is CaptureState.RUNNING:
             self._controller.submit("stop_and_save")
         else:
             self._set_status("Остановить можно только запущенный захват.")
 
     def action_continue_capture(self) -> None:
+        if not self._state_is_known():
+            return
         if self._state is CaptureState.STOPPED:
             self._controller.submit("continue")
         else:
             self._set_status("Продолжить можно только остановленный захват.")
 
     def action_restart_capture(self) -> None:
+        if not self._state_is_known():
+            return
         if self._state in (
             CaptureState.STOPPED,
             CaptureState.FAILED,
             CaptureState.LIMIT_REACHED,
         ):
+            self._clear_packets_for_restart()
             self._controller.submit("restart")
         else:
             self._set_status(
@@ -154,6 +192,8 @@ class LiveCaptureApp(App[Path | None]):
             )
 
     def action_save_snapshot(self) -> None:
+        if not self._state_is_known():
+            return
         if self._state in (
             CaptureState.RUNNING,
             CaptureState.STOPPED,
@@ -218,19 +258,37 @@ class LiveCaptureApp(App[Path | None]):
 
     def _apply_filters(self) -> None:
         self._filter_timer = None
-        result = self._query_packets(
-            PacketQuery(
-                display_filter=self.query_one("#display-filter", Input).value,
-                info_query=self.query_one("#info-search", Input).value,
-                limit=len(self._all_packets) or 1,
-            )
+        query = PacketQuery(
+            display_filter=self.query_one("#display-filter", Input).value,
+            info_query=self.query_one("#info-search", Input).value,
+            limit=len(self._all_packets) or 1,
         )
-        if result.error is not None:
-            self.query_one("#filter-status", Static).update(Text(result.error))
-            return
+        self._query_generation += 1
+        generation = self._query_generation
+        self.run_worker(
+            partial(self._run_query, generation, query),
+            name="live-query",
+            group="live-query",
+            exit_on_error=False,
+            exclusive=True,
+            thread=True,
+        )
 
+    def _run_query(self, generation: int, query: PacketQuery) -> None:
+        try:
+            result = self._query_packets(query)
+        except (TsharkReadError, OSError) as error:
+            result = PacketQueryResult((), str(error))
+        self.post_message(LiveQueryCompleted(generation, result))
+
+    def on_live_query_completed(self, event: LiveQueryCompleted) -> None:
+        if event.generation != self._query_generation:
+            return
+        if event.result.error is not None:
+            self.query_one("#filter-status", Static).update(Text(event.result.error))
+            return
         self.query_one("#filter-status", Static).update(Text(""))
-        self._replace_packets(result.packets)
+        self._replace_packets(event.result.packets)
 
     def _replace_packets(self, packets: tuple[PacketSummary, ...]) -> None:
         selected_number = self._selected_packet_number()
@@ -275,22 +333,75 @@ class LiveCaptureApp(App[Path | None]):
             )
 
     def _show_details(self, packet: PacketSummary) -> None:
-        if self._details_packet_number == packet.number:
+        if packet.number in (
+            self._details_packet_number,
+            self._details_requested_number,
+        ):
             return
-        self._details_packet_number = packet.number
+        self._details_requested_number = packet.number
+        self._details_generation += 1
+        generation = self._details_generation
+        self.run_worker(
+            partial(self._run_details, generation, packet.number),
+            name="live-details",
+            group="live-details",
+            exit_on_error=False,
+            exclusive=True,
+            thread=True,
+        )
+
+    def _run_details(self, generation: int, number: int) -> None:
         try:
-            details = self._read_details(packet.number)
+            details = self._read_details(number)
         except (TsharkReadError, OSError) as error:
-            text = Text(f"Не удалось загрузить детали: {error}")
+            self.post_message(
+                LiveDetailsCompleted(generation, number, None, str(error))
+            )
         else:
-            text = render_packet_details(packet, details)
+            self.post_message(LiveDetailsCompleted(generation, number, details, None))
+
+    def on_live_details_completed(self, event: LiveDetailsCompleted) -> None:
+        if event.generation != self._details_generation:
+            return
+        self._details_requested_number = None
+        packet = next(
+            (packet for packet in self._packets if packet.number == event.number), None
+        )
+        if packet is None or self._selected_packet_number() != event.number:
+            return
+        self._details_packet_number = event.number
+        if event.error is not None:
+            text = Text(f"Не удалось загрузить детали: {event.error}")
+        else:
+            assert event.details is not None
+            text = render_packet_details(packet, event.details)
         self.query_one("#details-content", Static).update(text)
 
     def _show_capture_status(self, packets: int, size: int) -> None:
-        state = _STATE_LABELS[self._state]
+        state = "ожидание данных" if self._state is None else _STATE_LABELS[self._state]
         self.query_one("#capture-status", Static).update(
             Text(f"Состояние: {state} · пакетов: {packets} · байт: {size}")
         )
 
     def _set_status(self, message: str) -> None:
         self.query_one("#live-status", Static).update(Text(message))
+
+    def _state_is_known(self) -> bool:
+        if self._state is not None:
+            return True
+        self._set_status("Состояние захвата ещё не получено.")
+        return False
+
+    def _clear_packets_for_restart(self) -> None:
+        self._all_packets = ()
+        self._packets = ()
+        self._pending_events = deque(
+            event
+            for event in self._pending_events
+            if not isinstance(event, LivePacketsAdded)
+        )
+        self._query_generation += 1
+        self._details_generation += 1
+        self._details_packet_number = None
+        self._details_requested_number = None
+        self._rebuild_table(self.size.width >= 120)

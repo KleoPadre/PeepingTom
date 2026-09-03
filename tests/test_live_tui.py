@@ -1,3 +1,4 @@
+import threading
 from pathlib import Path
 from typing import Literal
 
@@ -110,6 +111,63 @@ async def test_live_app_preserves_selected_row_when_batch_arrives() -> None:
 
 
 @pytest.mark.asyncio
+async def test_live_callbacks_never_run_in_main_thread() -> None:
+    callback_threads: list[threading.Thread] = []
+
+    def threaded_query(_query: PacketQuery) -> PacketQueryResult:
+        callback_threads.append(threading.current_thread())
+        return PacketQueryResult((packet(1),), None)
+
+    def threaded_details(number: int) -> PacketDetails:
+        callback_threads.append(threading.current_thread())
+        return PacketDetails(f"Frame {number}", "0000  aa")
+
+    controller = FakeController(events=(LivePacketsAdded((packet(1),)),))
+    app = LiveCaptureApp("en0", controller, threaded_query, threaded_details)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.12)
+        await pilot.press("f", "d", "n", "s")
+        await pilot.pause(0.25)
+
+        assert len(callback_threads) == 2
+        assert all(thread is not threading.main_thread() for thread in callback_threads)
+
+
+@pytest.mark.asyncio
+async def test_restart_clears_packets_from_previous_capture() -> None:
+    controller = FakeController(
+        events=(
+            LiveStateChanged(CaptureState.STOPPED, 1, 72),
+            LivePacketsAdded((packet(1, info="старый"),)),
+        )
+    )
+    app = LiveCaptureApp("en0", controller, query_packets, read_details)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.12)
+        await pilot.press("r")
+        controller.publish(LivePacketsAdded((packet(1, info="новый"),)))
+        await pilot.pause(0.11)
+
+        table = app.query_one("#packets", DataTable)
+        assert table.row_count == 1
+        assert str(table.get_row_at(0)[-1]) == "новый"
+
+
+@pytest.mark.asyncio
+async def test_state_action_is_blocked_until_controller_reports_state() -> None:
+    controller = FakeController()
+    app = LiveCaptureApp("en0", controller, query_packets, read_details)
+
+    async with app.run_test() as pilot:
+        await pilot.press("c")
+
+        assert controller.commands == []
+        assert status_text(app) == "Состояние захвата ещё не получено."
+
+
+@pytest.mark.asyncio
 async def test_live_app_starts_controller_and_shows_state() -> None:
     controller = FakeController(
         events=(LiveStateChanged(CaptureState.RUNNING, packets=7, size=4096),)
@@ -141,10 +199,13 @@ async def test_s_submits_stop_and_save_only_while_running() -> None:
 
 @pytest.mark.asyncio
 async def test_invalid_stop_does_not_submit_and_shows_russian_status() -> None:
-    controller = FakeController()
+    controller = FakeController(
+        events=(LiveStateChanged(CaptureState.STOPPED, packets=0, size=0),)
+    )
     app = LiveCaptureApp("en0", controller, query_packets, read_details)
 
     async with app.run_test() as pilot:
+        await pilot.pause(0.12)
         await pilot.press("s")
 
         assert controller.commands == []
