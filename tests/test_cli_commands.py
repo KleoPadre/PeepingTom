@@ -1,4 +1,3 @@
-from collections.abc import Iterator
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -6,6 +5,7 @@ from typer.testing import CliRunner
 from wispwire.capture import CaptureError, CaptureState
 from wispwire.cli import app
 from wispwire.diagnostics import DoctorReport
+from wispwire.file_source import PacketQuery, PacketQueryResult
 from wispwire.packets import PacketDetails, PacketSummary
 from wispwire.sqlite_support import SqliteFeatureStatus
 from wispwire.tshark import TsharkReadError
@@ -304,6 +304,7 @@ def fake_app(started: list[tuple[tuple[PacketSummary, ...], str]]):
             packets: tuple[PacketSummary, ...],
             source_name: str,
             _read_details,
+            **_kwargs,
         ) -> None:
             self.packets = packets
             self.source_name = source_name
@@ -325,6 +326,7 @@ def test_open_passes_capture_to_packet_details_reader(monkeypatch, tmp_path) -> 
             packets: tuple[PacketSummary, ...],
             _source_name: str,
             read_details,
+            **_kwargs,
         ) -> None:
             self._packets = packets
             self._read_details = read_details
@@ -344,9 +346,21 @@ def test_open_passes_capture_to_packet_details_reader(monkeypatch, tmp_path) -> 
         "wispwire.cli.inspect_tool",
         lambda _: ToolStatus("tshark", Path("/usr/bin/tshark"), "4.4.0", None),
     )
-    monkeypatch.setattr(
-        "wispwire.cli.iter_packet_summaries", lambda *_: iter([packet()])
-    )
+
+    class FakeSource:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def load(self, _limit: int) -> tuple[PacketSummary, ...]:
+            return (packet(),)
+
+        def query(self, _query: PacketQuery) -> PacketQueryResult:
+            return PacketQueryResult((packet(),), None)
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("wispwire.cli.FilePacketSource", FakeSource)
     monkeypatch.setattr("wispwire.cli.read_packet_details", fake_read_packet_details)
     monkeypatch.setattr("wispwire.cli.WispWireApp", FakeApp)
 
@@ -364,15 +378,103 @@ def test_open_starts_tui_with_read_only_packet_summaries(monkeypatch, tmp_path) 
         "wispwire.cli.inspect_tool",
         lambda _: ToolStatus("tshark", Path("/opt/bin/tshark"), "4.4.0", None),
     )
-    monkeypatch.setattr(
-        "wispwire.cli.iter_packet_summaries", lambda *_: iter([packet()])
-    )
+
+    class FakeSource:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def load(self, _limit: int) -> tuple[PacketSummary, ...]:
+            return (packet(),)
+
+        def query(self, _query: PacketQuery) -> PacketQueryResult:
+            return PacketQueryResult((packet(),), None)
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("wispwire.cli.FilePacketSource", FakeSource)
     monkeypatch.setattr("wispwire.cli.WispWireApp", fake_app(started))
 
     result = CliRunner().invoke(app, ["open", str(capture_path), "--limit", "10"])
 
     assert result.exit_code == 0
     assert started == [((packet(),), "capture.pcapng")]
+
+
+def test_open_passes_initial_display_filter_to_tui(monkeypatch, tmp_path) -> None:
+    capture_path = tmp_path / "capture.pcapng"
+    capture_path.touch()
+    started: list[str] = []
+
+    class FakeSource:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def load(self, _limit: int) -> tuple[PacketSummary, ...]:
+            return (packet(),)
+
+        def query(self, _query: PacketQuery) -> PacketQueryResult:
+            return PacketQueryResult((packet(),), None)
+
+        def close(self) -> None:
+            pass
+
+    class FakeApp:
+        def __init__(self, *_args, initial_filter: str = "", **_kwargs) -> None:
+            started.append(initial_filter)
+
+        def run(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "wispwire.cli.inspect_tool",
+        lambda _: ToolStatus("tshark", Path("/opt/bin/tshark"), "4.4.0", None),
+    )
+    monkeypatch.setattr("wispwire.cli.FilePacketSource", FakeSource)
+    monkeypatch.setattr("wispwire.cli.WispWireApp", FakeApp)
+
+    result = CliRunner().invoke(app, ["open", str(capture_path), "--filter", "udp"])
+
+    assert result.exit_code == 0
+    assert started == ["udp"]
+
+
+def test_open_closes_file_packet_source_after_tui_exit(monkeypatch, tmp_path) -> None:
+    capture_path = tmp_path / "capture.pcapng"
+    capture_path.touch()
+    events: list[str] = []
+
+    class FakeSource:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def load(self, _limit: int) -> tuple[PacketSummary, ...]:
+            return (packet(),)
+
+        def query(self, _query: PacketQuery) -> PacketQueryResult:
+            return PacketQueryResult((packet(),), None)
+
+        def close(self) -> None:
+            events.append("close")
+
+    class FakeApp:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def run(self) -> None:
+            events.append("run")
+
+    monkeypatch.setattr(
+        "wispwire.cli.inspect_tool",
+        lambda _: ToolStatus("tshark", Path("/opt/bin/tshark"), "4.4.0", None),
+    )
+    monkeypatch.setattr("wispwire.cli.FilePacketSource", FakeSource)
+    monkeypatch.setattr("wispwire.cli.WispWireApp", FakeApp)
+
+    result = CliRunner().invoke(app, ["open", str(capture_path)])
+
+    assert result.exit_code == 0
+    assert events == ["run", "close"]
 
 
 def test_open_reports_empty_capture_without_starting_tui(monkeypatch, tmp_path) -> None:
@@ -383,7 +485,21 @@ def test_open_reports_empty_capture_without_starting_tui(monkeypatch, tmp_path) 
         "wispwire.cli.inspect_tool",
         lambda _: ToolStatus("tshark", Path("/opt/bin/tshark"), "4.4.0", None),
     )
-    monkeypatch.setattr("wispwire.cli.iter_packet_summaries", lambda *_: iter(()))
+
+    class FakeSource:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def load(self, _limit: int) -> tuple[PacketSummary, ...]:
+            return ()
+
+        def query(self, _query: PacketQuery) -> PacketQueryResult:
+            return PacketQueryResult((), None)
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("wispwire.cli.FilePacketSource", FakeSource)
     monkeypatch.setattr("wispwire.cli.WispWireApp", fake_app(started))
 
     result = CliRunner().invoke(app, ["open", str(capture_path)])
@@ -431,10 +547,17 @@ def test_open_reports_tshark_read_error_without_traceback(
         lambda _: ToolStatus("tshark", Path("/opt/bin/tshark"), "4.4.0", None),
     )
 
-    def raise_read_error(*_) -> None:
-        raise TsharkReadError("Повреждённый захват")
+    class FakeSource:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
 
-    monkeypatch.setattr("wispwire.cli.iter_packet_summaries", raise_read_error)
+        def load(self, _limit: int) -> tuple[PacketSummary, ...]:
+            raise TsharkReadError("Повреждённый захват")
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("wispwire.cli.FilePacketSource", FakeSource)
 
     result = CliRunner().invoke(app, ["open", str(capture_path)])
 
@@ -453,11 +576,17 @@ def test_open_reports_tshark_read_error_after_received_packet(
         lambda _: ToolStatus("tshark", Path("/opt/bin/tshark"), "4.4.0", None),
     )
 
-    def packets_then_error(*_) -> Iterator[PacketSummary]:
-        yield packet()
-        raise TsharkReadError("Повреждённый захват")
+    class FakeSource:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
 
-    monkeypatch.setattr("wispwire.cli.iter_packet_summaries", packets_then_error)
+        def load(self, _limit: int) -> tuple[PacketSummary, ...]:
+            raise TsharkReadError("Повреждённый захват")
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr("wispwire.cli.FilePacketSource", FakeSource)
 
     result = CliRunner().invoke(app, ["open", str(capture_path)])
 

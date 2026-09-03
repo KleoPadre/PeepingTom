@@ -48,7 +48,7 @@
 - Consumes: `build_fields_command(tshark_path: Path, capture_path: Path)` и `iter_packet_summaries(capture_path: Path, tshark_path: Path, limit: int, popen: Callable[..., subprocess.Popen[str]] = subprocess.Popen)`.
 - Produces: `build_fields_command(tshark_path: Path, capture_path: Path, display_filter: str | None = None) -> list[str]` и `iter_packet_summaries(capture_path: Path, tshark_path: Path, limit: int, display_filter: str | None = None, popen: Callable[..., subprocess.Popen[str]] = subprocess.Popen) -> Iterator[PacketSummary]`.
 
-- [ ] **Step 1: написать падающие тесты аргументов display filter.**
+- [x] **Step 1: написать падающие тесты аргументов display filter.**
 
 ```python
 def test_build_fields_command_adds_display_filter_without_rewriting() -> None:
@@ -88,13 +88,13 @@ def test_iter_packet_summaries_passes_display_filter_to_tshark() -> None:
     assert commands[0][4:6] == ["-Y", "udp"]
 ```
 
-- [ ] **Step 2: подтвердить Red-цикл.**
+- [x] **Step 2: подтвердить Red-цикл.**
 
 Run: `.venv/bin/python -m pytest tests/test_tshark.py::test_build_fields_command_adds_display_filter_without_rewriting tests/test_tshark.py::test_iter_packet_summaries_passes_display_filter_to_tshark -v`
 
 Expected: FAIL, потому что `build_fields_command` и `iter_packet_summaries` ещё не принимают `display_filter`.
 
-- [ ] **Step 3: реализовать минимальное изменение TShark-команды.**
+- [x] **Step 3: реализовать минимальное изменение TShark-команды.**
 
 ```python
 def build_fields_command(
@@ -138,13 +138,13 @@ def build_fields_command(
 
 `iter_packet_summaries` должен передавать `display_filter` в `build_fields_command`; логика stderr, `limit`, остановки процесса и `TsharkReadError` не меняется.
 
-- [ ] **Step 4: проверить Green-цикл TShark.**
+- [x] **Step 4: проверить Green-цикл TShark.**
 
 Run: `.venv/bin/python -m pytest tests/test_tshark.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 5: закоммитить независимую задачу.**
+- [x] **Step 5: закоммитить независимую задачу.**
 
 ```bash
 git add src/wispwire/tshark.py tests/test_tshark.py
@@ -163,7 +163,7 @@ git commit -m "Добавить display filter для чтения TShark"
 - Consumes: `PacketSummary`, `PacketRecord`, `PacketIndex`, `SessionStorage`, `iter_packet_summaries`.
 - Produces: `PacketQuery(display_filter: str = "", info_query: str = "", limit: int = 1000)`, `PacketQueryResult(packets: tuple[PacketSummary, ...], error: str | None = None)`, `FilePacketSource(capture_path: Path, tshark_path: Path, storage: SessionStorage | None = None, iter_summaries: Callable[..., Iterator[PacketSummary]] = iter_packet_summaries)`, `FilePacketSource.load(limit: int) -> tuple[PacketSummary, ...]`, `FilePacketSource.query(query: PacketQuery) -> PacketQueryResult` и `FilePacketSource.close() -> None`.
 
-- [ ] **Step 1: написать падающий тест начальной индексации.**
+- [x] **Step 1: написать падающий тест начальной индексации.**
 
 ```python
 def test_file_packet_source_load_indexes_initial_packets(tmp_path: Path) -> None:
@@ -182,7 +182,7 @@ def test_file_packet_source_load_indexes_initial_packets(tmp_path: Path) -> None
     assert source.query(PacketQuery(info_query="telegram", limit=10)).packets == (packets[1],)
 ```
 
-- [ ] **Step 2: написать падающий тест display filter и пересечения с Info search.**
+- [x] **Step 2: написать падающий тест display filter и пересечения с Info search.**
 
 ```python
 def test_file_packet_source_intersects_display_filter_and_info_query(tmp_path: Path) -> None:
@@ -212,7 +212,7 @@ def test_file_packet_source_intersects_display_filter_and_info_query(tmp_path: P
     assert calls == [None, "dns"]
 ```
 
-- [ ] **Step 3: написать падающий тест ошибки display filter.**
+- [x] **Step 3: написать падающий тест ошибки display filter.**
 
 ```python
 def test_file_packet_source_returns_filter_error_without_losing_index(tmp_path: Path) -> None:
@@ -237,13 +237,13 @@ def test_file_packet_source_returns_filter_error_without_losing_index(tmp_path: 
     assert source.query(PacketQuery(info_query="telegram", limit=10)).packets == packets
 ```
 
-- [ ] **Step 4: подтвердить Red-цикл.**
+- [x] **Step 4: подтвердить Red-цикл.**
 
 Run: `.venv/bin/python -m pytest tests/test_file_source.py -v`
 
 Expected: FAIL с `ModuleNotFoundError: No module named 'wispwire.file_source'`.
 
-- [ ] **Step 5: реализовать минимальный файловый источник.**
+- [x] **Step 5: реализовать минимальный файловый источник.**
 
 ```python
 @dataclass(frozen=True)
@@ -297,13 +297,13 @@ class FilePacketSource:
 
 Индекс создаёт обычный SQLite-файл внутри session root; сразу после создания его нужно зарегистрировать через `SessionStorage.register_file()` и сохранить возвращённый `Session` в `self._session`, чтобы `close_session()` видел тот же manifest, что записан на диск. `close()` закрывает индекс и вызывает `SessionStorage.close_session(self._session)`. В тестах проверять, что временная сессия удаляется вызовом `source.close()`.
 
-- [ ] **Step 6: проверить Green-цикл источника.**
+- [x] **Step 6: проверить Green-цикл источника.**
 
 Run: `.venv/bin/python -m pytest tests/test_file_source.py tests/test_index.py tests/test_sessions.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 7: закоммитить независимую задачу.**
+- [x] **Step 7: закоммитить независимую задачу.**
 
 ```bash
 git add src/wispwire/file_source.py tests/test_file_source.py
@@ -322,7 +322,7 @@ git commit -m "Добавить источник пакетов для файл�
 - Consumes: `PacketQuery`, `PacketQueryResult` и `query_packets: Callable[[PacketQuery], PacketQueryResult]`.
 - Produces: `WispWireApp(packets: tuple[PacketSummary, ...], source_name: str, read_details: Callable[[PacketSummary], PacketDetails], query_packets: Callable[[PacketQuery], PacketQueryResult] | None = None, initial_filter: str = "")`.
 
-- [ ] **Step 1: написать падающий тест фокуса display filter.**
+- [x] **Step 1: написать падающий тест фокуса display filter.**
 
 ```python
 @pytest.mark.asyncio
@@ -335,7 +335,7 @@ async def test_app_focuses_display_filter_with_f_key() -> None:
         assert app.focused.id == "display-filter"
 ```
 
-- [ ] **Step 2: написать падающий тест Info search обновляет таблицу.**
+- [x] **Step 2: написать падающий тест Info search обновляет таблицу.**
 
 ```python
 @pytest.mark.asyncio
@@ -359,7 +359,7 @@ async def test_app_updates_table_from_info_search() -> None:
         assert calls[-1].info_query == "tel"
 ```
 
-- [ ] **Step 3: написать падающий тест ошибки display filter сохраняет таблицу.**
+- [x] **Step 3: написать падающий тест ошибки display filter сохраняет таблицу.**
 
 ```python
 @pytest.mark.asyncio
@@ -381,7 +381,7 @@ async def test_app_keeps_previous_rows_when_display_filter_has_error() -> None:
         assert "Синтаксическая ошибка display filter" in str(app.query_one("#filter-status", Static).renderable)
 ```
 
-- [ ] **Step 4: написать падающий тест `Esc` очищает активное поле.**
+- [x] **Step 4: написать падающий тест `Esc` очищает активное поле.**
 
 ```python
 @pytest.mark.asyncio
@@ -404,13 +404,13 @@ async def test_app_escape_clears_focused_filter() -> None:
         assert calls[-1].display_filter == ""
 ```
 
-- [ ] **Step 5: подтвердить Red-цикл.**
+- [x] **Step 5: подтвердить Red-цикл.**
 
 Run: `.venv/bin/python -m pytest tests/test_tui.py -v`
 
 Expected: FAIL, потому что `Input`, `query_packets`, `initial_filter` и `#filter-status` ещё отсутствуют.
 
-- [ ] **Step 6: реализовать минимальный TUI-фильтр.**
+- [x] **Step 6: реализовать минимальный TUI-фильтр.**
 
 ```python
 from textual.widgets import DataTable, Footer, Header, Input, Static
@@ -428,13 +428,13 @@ def action_focus_info_search(self) -> None:
 
 `on_input_changed()` запускает `self.set_timer(0.2, self._apply_filters)`; предыдущий таймер отменяется. `_apply_filters()` строит `PacketQuery(display_filter=display.value, info_query=info.value, limit=len(self._all_packets) or 1)`, вызывает `query_packets`, при `error is None` заменяет `self._packets`, перестраивает таблицу и очищает статус. При ошибке display filter обновляет только `#filter-status` и сохраняет текущую таблицу. Все строки TShark и пользовательского ввода выводятся через `Text`.
 
-- [ ] **Step 7: проверить Green-цикл TUI.**
+- [x] **Step 7: проверить Green-цикл TUI.**
 
 Run: `.venv/bin/python -m pytest tests/test_tui.py -v`
 
 Expected: PASS.
 
-- [ ] **Step 8: закоммитить независимую задачу.**
+- [x] **Step 8: закоммитить независимую задачу.**
 
 ```bash
 git add src/wispwire/tui.py tests/test_tui.py
@@ -456,7 +456,7 @@ git commit -m "Добавить фильтры в файловый TUI"
 - Consumes: `FilePacketSource`, `PacketQuery`, `WispWireApp(..., query_packets=..., initial_filter=...)`.
 - Produces: `wispwire open PATH [--limit N] [--filter TEXT]` и обновлённый статус первого пункта этапа 7.
 
-- [ ] **Step 1: написать падающий CLI-тест `--filter`.**
+- [x] **Step 1: написать падающий CLI-тест `--filter`.**
 
 ```python
 def test_open_passes_initial_display_filter_to_tui(monkeypatch, tmp_path: Path) -> None:
@@ -497,7 +497,7 @@ def test_open_passes_initial_display_filter_to_tui(monkeypatch, tmp_path: Path) 
     assert started == ["udp"]
 ```
 
-- [ ] **Step 2: написать падающий CLI-тест закрытия временной сессии.**
+- [x] **Step 2: написать падающий CLI-тест закрытия временной сессии.**
 
 ```python
 def test_open_closes_file_packet_source_after_tui_exit(monkeypatch, tmp_path: Path) -> None:
@@ -538,13 +538,13 @@ def test_open_closes_file_packet_source_after_tui_exit(monkeypatch, tmp_path: Pa
     assert events == ["run", "close"]
 ```
 
-- [ ] **Step 3: подтвердить Red-цикл.**
+- [x] **Step 3: подтвердить Red-цикл.**
 
 Run: `.venv/bin/python -m pytest tests/test_cli_commands.py::test_open_passes_initial_display_filter_to_tui tests/test_cli_commands.py::test_open_closes_file_packet_source_after_tui_exit -v`
 
 Expected: FAIL, потому что CLI ещё не создаёт `FilePacketSource` и не принимает `--filter`.
 
-- [ ] **Step 4: реализовать CLI-границу.**
+- [x] **Step 4: реализовать CLI-границу.**
 
 ```python
 @app.command()
@@ -557,7 +557,7 @@ def open(
 
 После проверки пути и TShark создать `FilePacketSource(capture_path, tshark_path)`, вызвать `source.load(limit)`, передать в `WispWireApp(..., query_packets=source.query, initial_filter=display_filter)`, а `source.close()` вызвать в `finally` после запуска TUI. `TsharkReadError` при начальной загрузке остаётся русской ошибкой с кодом 1, пустой захват не запускает TUI.
 
-- [ ] **Step 5: обновить README и статусный план.**
+- [x] **Step 5: обновить README и статусный план.**
 
 README должен показать:
 
@@ -569,7 +569,7 @@ README должен показать:
 
 В `docs/superpowers/plans/2026-08-28-wispwire-tui.md` отметить первый пункт этапа 7 как `[x]` только после успешных проверок и коммита задачи. Второй пункт этапа 7 оставить `[ ]`.
 
-- [ ] **Step 6: выполнить полный набор проверок.**
+- [x] **Step 6: выполнить полный набор проверок.**
 
 Run:
 
@@ -584,7 +584,7 @@ git diff --check
 
 Expected: все команды завершаются кодом 0.
 
-- [ ] **Step 7: проверить дифф и закоммитить.**
+- [x] **Step 7: проверить дифф и закоммитить.**
 
 Перед коммитом убедиться, что изменения ограничены `src/wispwire/tshark.py`, `src/wispwire/file_source.py`, `src/wispwire/tui.py`, `src/wispwire/cli.py`, тестами, README и планами. Затем выполнить:
 

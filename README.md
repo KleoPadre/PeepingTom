@@ -63,12 +63,19 @@ SQLite FTS5 trigram, требуемый для индекса и поиска п
 ```bash
 .venv/bin/wispwire open ~/Downloads/capture.pcapng
 .venv/bin/wispwire open ~/Downloads/capture.pcap --limit 500
+.venv/bin/wispwire open ~/Downloads/capture.pcapng --filter "udp"
 ```
 
 TUI не изменяет исходный файл: `tshark` читает только сводки и по выбранному
-кадру показывает дерево протоколов и hex/ASCII-дамп. Используйте `↑` и `↓` для
-выбора пакета, `Tab` для смены фокуса и `Q` для выхода. WispWire не заменяет
-Wireshark: поиск и фильтры будут добавлены на следующих этапах.
+кадру показывает дерево протоколов и hex/ASCII-дамп. Display filter передаётся
+в TShark через `-Y` без переписывания выражения. Поиск по `Info` работает как
+регистронезависимая подстрока и применяется вместе с display filter.
+
+Используйте `↑` и `↓` для выбора пакета, `F` для поля display filter, `/` для
+поиска по `Info`, `Esc` для очистки активного поля, `Tab` для смены фокуса и
+`Q` для выхода. WispWire не заменяет Wireshark: live-управление через TUI,
+stop/continue/restart/save и фильтрация закрытых live-сегментов остаются
+следующим подпланом этапа 7.
 
 ## Live-захват
 

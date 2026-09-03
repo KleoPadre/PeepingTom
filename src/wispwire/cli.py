@@ -7,9 +7,10 @@ from rich.table import Table
 
 from wispwire.capture import CaptureError, CaptureSession, CaptureState
 from wispwire.diagnostics import collect_doctor_report, list_interfaces
+from wispwire.file_source import FilePacketSource
 from wispwire.packets import PacketDetails, PacketSummary
 from wispwire.sessions import SessionStorage
-from wispwire.tshark import TsharkReadError, iter_packet_summaries, read_packet_details
+from wispwire.tshark import TsharkReadError, read_packet_details
 from wispwire.tui import WispWireApp
 from wispwire.wireshark import inspect_tool
 
@@ -122,6 +123,7 @@ def open(
     limit: int = typer.Option(
         1000, min=1, help="Максимальное число выводимых пакетов."
     ),
+    display_filter: str = typer.Option("", "--filter", help="Display filter TShark."),
 ) -> None:
     """Открыть готовый захват в TUI."""
     if not capture_path.exists():
@@ -137,20 +139,30 @@ def open(
         raise typer.Exit(code=1)
     tshark_path = status.path
 
+    source: FilePacketSource | None = None
     try:
-        packets = tuple(iter_packet_summaries(capture_path, tshark_path, limit))
+        source = FilePacketSource(capture_path, tshark_path)
+        packets = source.load(limit)
+        if not packets:
+            console.print("Пакеты не найдены.")
+            return
+
+        def read_details(packet: PacketSummary) -> PacketDetails:
+            return read_packet_details(capture_path, tshark_path, packet.number)
+
+        WispWireApp(
+            packets,
+            capture_path.name,
+            read_details,
+            query_packets=source.query,
+            initial_filter=display_filter,
+        ).run()
     except TsharkReadError as error:
         console.print(f"Не удалось прочитать захват: {error}")
         raise typer.Exit(code=1) from None
-
-    if not packets:
-        console.print("Пакеты не найдены.")
-        return
-
-    def read_details(packet: PacketSummary) -> PacketDetails:
-        return read_packet_details(capture_path, tshark_path, packet.number)
-
-    WispWireApp(packets, capture_path.name, read_details).run()
+    finally:
+        if source is not None:
+            source.close()
 
 
 def _print_interfaces(interfaces: tuple[str, ...]) -> None:
