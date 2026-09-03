@@ -292,6 +292,23 @@ def test_capture_reports_live_error_without_traceback(monkeypatch) -> None:
     assert "Traceback" not in result.output
 
 
+def test_capture_reports_controller_close_error_without_traceback(monkeypatch) -> None:
+    events: list[str] = []
+    fake_live_components(
+        monkeypatch,
+        events,
+        error=CaptureError("не удалось безопасно закрыть live-захват"),
+    )
+    monkeypatch.setattr("wispwire.cli.inspect_tool", available_capture_tools)
+    monkeypatch.setattr("wispwire.cli.list_interfaces", lambda: ("en0",))
+
+    result = CliRunner().invoke(app, ["capture", "--iface", "en0"])
+
+    assert result.exit_code == 1
+    assert "не удалось безопасно закрыть live-захват" in result.output
+    assert "Traceback" not in result.output
+
+
 def test_capture_destination_creates_catalog_and_uses_next_free_suffix(
     monkeypatch, tmp_path
 ) -> None:

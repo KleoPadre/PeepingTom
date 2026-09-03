@@ -119,9 +119,7 @@ class CaptureSession:
     @property
     def confirmed_size(self) -> int:
         """Возвращает размер текущей сессии с подтверждёнными сегментами."""
-        if self.session is None:
-            return 0
-        return self.storage.session_size(self.session)
+        return sum(segment.stat().st_size for segment in self._segments)
 
     def collect_closed_segments(self) -> tuple[Path, ...]:
         """Регистрирует безопасно завершённые dumpcap сегменты из stdout."""

@@ -3,10 +3,12 @@ from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import pytest
+
 from wispwire.file_source import PacketQuery, PacketQueryResult
 from wispwire.live_source import LivePacketSource
 from wispwire.packets import PacketDetails, PacketSummary
-from wispwire.sessions import SessionStorage
+from wispwire.sessions import Session, SessionSafetyError, SessionStorage
 from wispwire.tshark import TsharkReadError
 
 
@@ -44,6 +46,48 @@ def test_live_source_ignores_duplicate_segment(tmp_path: Path) -> None:
         assert source.ingest((segment,)) == (packet(1),)
         assert source.ingest((segment,)) == ()
         assert source.packet_count == 1
+    finally:
+        source.close()
+
+
+def test_live_source_rolls_back_segment_when_tshark_fails_after_packet(
+    tmp_path: Path,
+) -> None:
+    segment = tmp_path / "one.pcapng"
+    attempts = 0
+
+    def iter_summaries(*_args: object, **_kwargs: object) -> Iterator[PacketSummary]:
+        nonlocal attempts
+        attempts += 1
+        yield packet(1, "первый")
+        if attempts == 1:
+            raise TsharkReadError("TShark оборвал чтение сегмента")
+        yield packet(2, "второй")
+
+    source = LivePacketSource(
+        Path("tshark"),
+        SessionStorage(cache_root=tmp_path / "sessions", pid=123),
+        iter_summaries=iter_summaries,
+    )
+    try:
+        with pytest.raises(TsharkReadError, match="оборвал чтение"):
+            source.ingest((segment,))
+
+        assert source.packet_count == 0
+        assert source.query(PacketQuery(limit=10)).packets == ()
+
+        assert source.ingest((segment,)) == (
+            packet(1, "первый"),
+            packet(2, "второй"),
+        )
+        assert source.packet_count == 2
+        assert source.query(PacketQuery(info_query="первый", limit=10)).packets == (
+            packet(1, "первый"),
+        )
+        assert source.query(PacketQuery(info_query="второй", limit=10)).packets == (
+            packet(2, "второй"),
+        )
+        assert source.ingest((segment,)) == ()
     finally:
         source.close()
 
@@ -219,3 +263,95 @@ def test_live_source_close_removes_only_its_temporary_session(tmp_path: Path) ->
 
     assert not session_path.exists()
     assert other.path.exists()
+
+
+def test_live_source_close_reports_cleanup_failure_and_allows_retry(
+    tmp_path: Path,
+) -> None:
+    storage = SessionStorage(cache_root=tmp_path / "sessions", pid=123)
+    source = LivePacketSource(Path("tshark"), storage)
+    session_path = source.session_path
+    real_close_session = storage.close_session
+    attempts = 0
+
+    def close_session(session: Session) -> bool:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return False
+        return real_close_session(session)
+
+    storage.close_session = close_session
+
+    with pytest.raises(SessionSafetyError, match="закрыть сессию"):
+        source.close()
+
+    assert source.session_path == session_path
+    assert session_path.exists()
+
+    source.close()
+
+    assert attempts == 2
+    assert not session_path.exists()
+
+
+def test_live_source_reset_keeps_old_session_and_packets_for_cleanup_retry(
+    tmp_path: Path,
+) -> None:
+    storage = SessionStorage(cache_root=tmp_path / "sessions", pid=123)
+    source = LivePacketSource(
+        Path("tshark"),
+        storage,
+        iter_summaries=lambda *_args, **_kwargs: iter([packet(1)]),
+    )
+    source.ingest((tmp_path / "one.pcapng",))
+    old_session_path = source.session_path
+    real_close_session = storage.close_session
+    attempts = 0
+
+    def close_session(session: Session) -> bool:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return False
+        return real_close_session(session)
+
+    storage.close_session = close_session
+    try:
+        with pytest.raises(SessionSafetyError, match="закрыть сессию"):
+            source.reset()
+
+        assert source.session_path == old_session_path
+        assert source.packet_count == 1
+        assert old_session_path.exists()
+
+        source.reset()
+
+        assert source.session_path != old_session_path
+        assert source.packet_count == 0
+        assert not old_session_path.exists()
+    finally:
+        source.close()
+
+
+def test_live_source_removes_new_session_when_index_registration_fails(
+    tmp_path: Path,
+) -> None:
+    class FailingRegistrationStorage(SessionStorage):
+        created_session: Session | None = None
+
+        def create_session(self) -> Session:
+            session = super().create_session()
+            self.created_session = session
+            return session
+
+        def register_file(self, session: Session, path: Path) -> Session:
+            raise SessionSafetyError("не удалось зарегистрировать индекс")
+
+    storage = FailingRegistrationStorage(cache_root=tmp_path / "sessions", pid=123)
+
+    with pytest.raises(SessionSafetyError, match="зарегистрировать индекс"):
+        LivePacketSource(Path("tshark"), storage)
+
+    assert storage.created_session is not None
+    assert not storage.created_session.path.exists()

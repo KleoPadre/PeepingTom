@@ -8,7 +8,7 @@ from pathlib import Path
 from wispwire.file_source import PacketQuery, PacketQueryResult
 from wispwire.index import PacketIndex, PacketRecord
 from wispwire.packets import PacketDetails, PacketSummary
-from wispwire.sessions import Session, SessionStorage
+from wispwire.sessions import Session, SessionSafetyError, SessionStorage
 from wispwire.tshark import TsharkReadError, iter_packet_summaries, read_packet_details
 
 
@@ -69,15 +69,22 @@ class LivePacketSource:
         for segment in segments:
             if segment in self._seen_segments:
                 continue
-            for local in self._iter_summaries(segment, self._tshark_path, self._limit):
-                global_packet = replace(local, number=self._next_number)
-                self._packets[self._next_number] = LivePacket(
-                    global_packet, segment, local.number
-                )
-                self._next_number += 1
-                added.append(global_packet)
+            local_packets = tuple(
+                self._iter_summaries(segment, self._tshark_path, self._limit)
+            )
+            segment_packets = tuple(
+                replace(packet, number=self._next_number + offset)
+                for offset, packet in enumerate(local_packets)
+            )
+            live_packets = {
+                packet.number: LivePacket(packet, segment, local_packets[index].number)
+                for index, packet in enumerate(segment_packets)
+            }
+            self._index.append(_records_from_packets(segment_packets, live_packets))
+            self._packets.update(live_packets)
+            self._next_number += len(segment_packets)
+            added.extend(segment_packets)
             self._seen_segments.add(segment)
-        self._index.append(_records_from_packets(tuple(added), self._packets))
         return tuple(added)
 
     def query(self, query: PacketQuery) -> PacketQueryResult:
@@ -125,7 +132,8 @@ class LivePacketSource:
         if self._closed:
             return
         self._index.close()
-        self._storage.close_session(self._session)
+        if not self._storage.close_session(self._session):
+            raise SessionSafetyError("не удалось закрыть сессию live-источника")
         self._session, self._index = self._create_index()
         self._packets.clear()
         self._seen_segments.clear()
@@ -140,14 +148,26 @@ class LivePacketSource:
         if self._closed:
             return
         self._index.close()
-        self._storage.close_session(self._session)
+        if not self._storage.close_session(self._session):
+            raise SessionSafetyError("не удалось закрыть сессию live-источника")
         self._closed = True
 
     def _create_index(self) -> tuple[Session, PacketIndex]:
         session = self._storage.create_session()
         index_path = session.path / "packets.sqlite3"
-        index = PacketIndex(index_path, check_same_thread=False)
-        session = self._storage.register_file(session, index_path)
+        index: PacketIndex | None = None
+        try:
+            index = PacketIndex(index_path, check_same_thread=False)
+            session = self._storage.register_file(session, index_path)
+        except Exception:
+            if index is not None:
+                index.close()
+            try:
+                index_path.unlink()
+            except FileNotFoundError:
+                pass
+            self._storage.close_session(session)
+            raise
         return session, index
 
     def _info_numbers(self, query: str) -> set[int] | None:

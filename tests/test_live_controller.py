@@ -4,6 +4,8 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
+
 from wispwire.capture import CaptureError, CaptureState
 from wispwire.live_controller import (
     LiveCaptureController,
@@ -43,6 +45,7 @@ class FakeCapture:
         self.thread_ids: list[int] = []
         self.collect_error: CaptureError | None = None
         self.restart_error: CaptureError | None = None
+        self.close_error: Exception | None = None
         self.log = log
 
     def _call(self, name: str) -> None:
@@ -81,6 +84,8 @@ class FakeCapture:
 
     def close(self) -> bool:
         self._call("close")
+        if self.close_error is not None:
+            raise self.close_error
         self.state = CaptureState.CLOSED
         return True
 
@@ -97,6 +102,7 @@ class FakeSource:
         self.calls: list[str] = []
         self.thread_ids: list[int] = []
         self.ingest_error: TsharkReadError | None = None
+        self.close_error: Exception | None = None
         self.log = log
 
     def _call(self, name: str) -> None:
@@ -119,6 +125,8 @@ class FakeSource:
 
     def close(self) -> None:
         self._call("close")
+        if self.close_error is not None:
+            raise self.close_error
 
 
 def events_until(controller: LiveCaptureController, predicate: object) -> list[object]:
@@ -305,6 +313,31 @@ def test_controller_keeps_source_when_restart_fails() -> None:
     )
 
 
+def test_controller_acknowledges_failed_restart_with_new_generation() -> None:
+    capture = FakeCapture()
+    capture.restart_error = CaptureError("не удалось перезапустить захват")
+    source = FakeSource({})
+    controller = LiveCaptureController(capture, source, poll_interval=0.05)
+
+    controller.start()
+    assert wait_until(lambda: capture.calls)
+    capture.state = CaptureState.STOPPED
+    controller.submit("restart")
+    events = events_until(
+        controller,
+        lambda items: any(
+            isinstance(item, LiveStateChanged) and item.generation == 1
+            for item in items
+        ),
+    )
+    controller.submit("quit")
+    controller.join()
+
+    assert LiveFailure("не удалось перезапустить захват", generation=1) in events
+    assert LiveStateChanged(CaptureState.FAILED, 0, 12, generation=1) in events
+    assert "reset" not in source.calls
+
+
 def test_controller_reports_tshark_ingest_error_without_closing_session(
     tmp_path: Path,
 ) -> None:
@@ -347,3 +380,24 @@ def test_controller_closes_once_after_collect_error() -> None:
     ]
     assert capture.calls.count("close") == 1
     assert source.calls.count("close") == 1
+
+
+def test_controller_join_reports_close_error_after_trying_both_resources(
+    capsys,
+) -> None:
+    capture = FakeCapture()
+    capture.close_error = OSError("сессия захвата не закрыта")
+    source = FakeSource({})
+    source.close_error = OSError("сессия индекса не закрыта")
+    controller = LiveCaptureController(capture, source, poll_interval=0.05)
+
+    controller.start()
+    assert wait_until(lambda: capture.calls)
+    controller.submit("quit")
+
+    with pytest.raises(CaptureError, match="сессия индекса не закрыта"):
+        controller.join()
+
+    assert source.calls.count("close") == 1
+    assert capture.calls.count("close") == 1
+    assert "Exception in thread" not in capsys.readouterr().err

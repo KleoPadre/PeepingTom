@@ -208,6 +208,50 @@ async def test_restart_ignores_stale_state_followed_by_stale_packet() -> None:
 
 
 @pytest.mark.asyncio
+async def test_failed_restart_acknowledges_generation_and_updates_failed_state() -> (
+    None
+):
+    controller = FakeController(
+        events=(LiveStateChanged(CaptureState.STOPPED, 1, 72, generation=0),)
+    )
+    app = LiveCaptureApp("en0", controller, query_packets, read_details)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.12)
+        await pilot.press("r")
+        controller.publish(
+            LiveFailure("не удалось перезапустить захват", generation=1),
+            LiveStateChanged(CaptureState.FAILED, 1, 72, generation=1),
+        )
+        await pilot.pause(0.11)
+
+        assert status_text(app) == "не удалось перезапустить захват"
+        assert "ошибка" in status_text(app, "#capture-status")
+
+        await pilot.press("c")
+        assert controller.commands == ["restart"]
+
+
+@pytest.mark.asyncio
+async def test_successful_restart_discards_failure_from_old_generation() -> None:
+    controller = FakeController(
+        events=(LiveStateChanged(CaptureState.STOPPED, 0, 0, generation=0),)
+    )
+    app = LiveCaptureApp("en0", controller, query_packets, read_details)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.12)
+        await pilot.press("r")
+        controller.publish(
+            LiveStateChanged(CaptureState.RUNNING, 0, 0, generation=1),
+            LiveFailure("устаревшая ошибка", generation=0),
+        )
+        await pilot.pause(0.11)
+
+        assert status_text(app) != "устаревшая ошибка"
+
+
+@pytest.mark.asyncio
 async def test_state_action_is_blocked_until_controller_reports_state() -> None:
     controller = FakeController()
     app = LiveCaptureApp("en0", controller, query_packets, read_details)

@@ -175,15 +175,19 @@ def test_confirmed_size_counts_only_registered_closed_segments(tmp_path: Path) -
     outside = tmp_path / "outside.pcapng"
     first.write_bytes(b"one")
     second.write_bytes(b"two!")
+    active = capture.session.path / "segment_current.pcapng"
+    unregistered = capture.session.path / "debug.log"
+    active.write_bytes(b"active-segment")
+    unregistered.write_bytes(b"not-confirmed")
     outside.write_bytes(b"not-a-segment")
     process.stdout = iter([f"{first}\n", f"{second}\n"])
     capture.collect_closed_segments()
 
-    assert capture.confirmed_size == capture.storage.session_size(capture.session)
+    assert capture.confirmed_size == 7
     process.stdout = iter([f"{outside}\n"])
     with pytest.raises(CaptureError, match="сегмент"):
         capture.collect_closed_segments()
-    assert capture.confirmed_size == capture.storage.session_size(capture.session)
+    assert capture.confirmed_size == 7
 
 
 def test_start_marks_capture_failed_when_dumpcap_cannot_start(tmp_path: Path) -> None:

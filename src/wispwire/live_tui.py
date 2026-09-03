@@ -250,6 +250,13 @@ class LiveCaptureApp(App[Path | None]):
                 self._state = event.state
                 self._show_capture_status(event.packets, event.size)
             elif isinstance(event, LiveFailure):
+                if event.generation < self._generation:
+                    continue
+                if (
+                    self._expected_restart_generation is not None
+                    and event.generation != self._expected_restart_generation
+                ):
+                    continue
                 self._set_status(event.message)
             elif isinstance(event, LiveSaved):
                 if event.open_in_file_tui:

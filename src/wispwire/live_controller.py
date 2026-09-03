@@ -12,6 +12,7 @@ from typing import Literal, TypeAlias
 from wispwire.capture import CaptureError, CaptureSession, CaptureState
 from wispwire.live_source import LivePacketSource
 from wispwire.packets import PacketSummary
+from wispwire.sessions import SessionSafetyError
 from wispwire.tshark import TsharkReadError
 
 
@@ -46,6 +47,7 @@ class LiveFailure:
     """Операция захвата завершилась ожидаемой ошибкой."""
 
     message: str
+    generation: int = 0
 
 
 LiveEvent: TypeAlias = LivePacketsAdded | LiveStateChanged | LiveSaved | LiveFailure
@@ -71,6 +73,7 @@ class LiveCaptureController:
         self._events: queue.SimpleQueue[LiveEvent] = queue.SimpleQueue()
         self._thread: threading.Thread | None = None
         self._generation = 0
+        self._terminal_error: BaseException | None = None
 
     def start(self) -> None:
         """Запускает неблокирующий поток управления захватом."""
@@ -96,6 +99,10 @@ class LiveCaptureController:
         """Ожидает завершения потока контроллера."""
         if self._thread is not None:
             self._thread.join()
+        if self._terminal_error is not None:
+            raise CaptureError(
+                f"не удалось безопасно закрыть live-захват: {self._terminal_error}"
+            ) from self._terminal_error
 
     def _run(self) -> None:
         try:
@@ -121,10 +128,7 @@ class LiveCaptureController:
                         self._fail(error)
                 threading.Event().wait(self._poll_interval)
         finally:
-            try:
-                self._source.close()
-            finally:
-                self._capture.close()
+            self._close_resources()
 
     def _process_commands(self) -> bool:
         while True:
@@ -137,7 +141,7 @@ class LiveCaptureController:
                 return True
             try:
                 self._process_command(command)
-            except (CaptureError, OSError) as error:
+            except (CaptureError, OSError, SessionSafetyError) as error:
                 self._fail(error)
 
     def _process_command(self, command: LiveCommand) -> None:
@@ -146,8 +150,14 @@ class LiveCaptureController:
                 raise CaptureError("нельзя продолжить захват: достигнут лимит размера")
             self._capture.continue_capture()
         elif command == "restart":
-            self._capture.restart()
-            self._source.reset()
+            try:
+                self._capture.restart()
+                self._source.reset()
+            except (CaptureError, OSError, SessionSafetyError) as error:
+                self._generation += 1
+                self._capture.state = CaptureState.FAILED
+                self._fail(error)
+                return
             self._generation += 1
         elif command == "save":
             destination = self._destination_factory()
@@ -170,9 +180,24 @@ class LiveCaptureController:
             )
         )
 
-    def _fail(self, error: CaptureError | OSError | TsharkReadError) -> None:
-        self._events.put(LiveFailure(str(error)))
+    def _fail(
+        self, error: CaptureError | OSError | SessionSafetyError | TsharkReadError
+    ) -> None:
+        self._events.put(LiveFailure(str(error), self._generation))
         self._publish_state()
+
+    def _close_resources(self) -> None:
+        terminal_error: BaseException | None = None
+        try:
+            self._source.close()
+        except (CaptureError, OSError, SessionSafetyError) as error:
+            terminal_error = error
+        try:
+            self._capture.close()
+        except (CaptureError, OSError, SessionSafetyError) as error:
+            if terminal_error is None:
+                terminal_error = error
+        self._terminal_error = terminal_error
 
 
 def _default_destination() -> Path:
