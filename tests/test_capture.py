@@ -166,6 +166,26 @@ def test_start_creates_session_and_starts_dumpcap(tmp_path: Path) -> None:
     }
 
 
+def test_confirmed_size_counts_only_registered_closed_segments(tmp_path: Path) -> None:
+    process = _Process()
+    capture = started_capture(tmp_path, process=process)
+    assert capture.session is not None
+    first = capture.session.path / "segment_00001.pcapng"
+    second = capture.session.path / "segment_00002.pcapng"
+    outside = tmp_path / "outside.pcapng"
+    first.write_bytes(b"one")
+    second.write_bytes(b"two!")
+    outside.write_bytes(b"not-a-segment")
+    process.stdout = iter([f"{first}\n", f"{second}\n"])
+    capture.collect_closed_segments()
+
+    assert capture.confirmed_size == capture.storage.session_size(capture.session)
+    process.stdout = iter([f"{outside}\n"])
+    with pytest.raises(CaptureError, match="сегмент"):
+        capture.collect_closed_segments()
+    assert capture.confirmed_size == capture.storage.session_size(capture.session)
+
+
 def test_start_marks_capture_failed_when_dumpcap_cannot_start(tmp_path: Path) -> None:
     def unavailable_popen(*args: object, **kwargs: object) -> Any:
         raise OSError("dumpcap отсутствует")
