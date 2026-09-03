@@ -1,13 +1,16 @@
+from datetime import datetime
 from pathlib import Path
-from time import sleep
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from wispwire.capture import CaptureError, CaptureSession, CaptureState
+from wispwire.capture import CaptureError, CaptureSession
 from wispwire.diagnostics import collect_doctor_report, list_interfaces
 from wispwire.file_source import FilePacketSource
+from wispwire.live_controller import LiveCaptureController
+from wispwire.live_source import LivePacketSource
+from wispwire.live_tui import LiveCaptureApp
 from wispwire.packets import PacketDetails, PacketSummary
 from wispwire.sessions import SessionStorage
 from wispwire.tshark import TsharkReadError, read_packet_details
@@ -72,7 +75,7 @@ def interfaces() -> None:
 def capture(
     interface: str = typer.Option(..., "--iface", help="Интерфейс для live-захвата."),
 ) -> None:
-    """Запустить live-захват в программном слое."""
+    """Запустить live-захват в live-TUI."""
     dumpcap = inspect_tool("dumpcap")
     if dumpcap.path is None or dumpcap.error is not None:
         console.print("dumpcap недоступен. Запустите `wispwire doctor` для проверки.")
@@ -87,6 +90,11 @@ def capture(
         console.print(f"Интерфейс {interface} недоступен.")
         raise typer.Exit(code=2)
 
+    tshark = inspect_tool("tshark")
+    if tshark.path is None or tshark.error is not None:
+        console.print("TShark недоступен. Запустите `wispwire doctor` для проверки.")
+        raise typer.Exit(code=1)
+
     session = CaptureSession(
         dumpcap.path,
         mergecap.path,
@@ -94,27 +102,23 @@ def capture(
         storage=SessionStorage(),
     )
     try:
-        session.start()
-        console.print(
-            f"Live-захват запущен на интерфейсе {interface}. "
-            "Чтобы остановить захват, нажмите Ctrl-C."
+        source = LivePacketSource(tshark.path)
+        controller = LiveCaptureController(
+            session,
+            source,
+            destination_factory=_capture_destination,
         )
-        while session.state is CaptureState.RUNNING:
-            session.collect_closed_segments()
-            if session.state is not CaptureState.RUNNING:
-                break
-            sleep(1)
-        if session.state is CaptureState.LIMIT_REACHED:
-            console.print("Live-захват остановлен: достигнут лимит размера.")
-        elif session.state is CaptureState.STOPPED:
-            console.print("Live-захват завершён процессом dumpcap.")
-    except KeyboardInterrupt:
-        console.print("Live-захват остановлен.")
+        saved_path = LiveCaptureApp(
+            interface,
+            controller,
+            source.query,
+            source.read_details,
+        ).run()
+        if saved_path is not None:
+            _open_capture_in_tui(saved_path)
     except CaptureError as error:
         console.print(f"Ошибка live-захвата: {error}")
         raise typer.Exit(code=1) from None
-    finally:
-        session.close()
 
 
 @app.command()
@@ -126,6 +130,16 @@ def open(
     display_filter: str = typer.Option("", "--filter", help="Display filter TShark."),
 ) -> None:
     """Открыть готовый захват в TUI."""
+    _open_capture_in_tui(capture_path, limit=limit, display_filter=display_filter)
+
+
+def _open_capture_in_tui(
+    capture_path: Path,
+    *,
+    limit: int = 1000,
+    display_filter: str = "",
+) -> None:
+    """Открыть существующий файл захвата через общий файловый TUI."""
     if not capture_path.exists():
         console.print("Файл захвата не найден.")
         raise typer.Exit(code=2)
@@ -163,6 +177,19 @@ def open(
     finally:
         if source is not None:
             source.close()
+
+
+def _capture_destination() -> Path:
+    """Вернуть новый постоянный путь для live-захвата, не создавая файл."""
+    catalog = Path.home() / "WispWire" / "Captures"
+    catalog.mkdir(parents=True, exist_ok=True)
+    stem = f"capture_{datetime.now().astimezone():%Y-%m-%d_%H-%M-%S}"
+    destination = catalog / f"{stem}.pcapng"
+    suffix = 2
+    while destination.exists():
+        destination = catalog / f"{stem}-{suffix}.pcapng"
+        suffix += 1
+    return destination
 
 
 def _print_interfaces(interfaces: tuple[str, ...]) -> None:

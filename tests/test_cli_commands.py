@@ -1,8 +1,9 @@
+from datetime import datetime
 from pathlib import Path
 
 from typer.testing import CliRunner
 
-from wispwire.capture import CaptureError, CaptureState
+from wispwire.capture import CaptureError
 from wispwire.cli import app
 from wispwire.diagnostics import DoctorReport
 from wispwire.file_source import PacketQuery, PacketQueryResult
@@ -78,29 +79,47 @@ def test_interfaces_prints_numbered_available_interfaces(monkeypatch) -> None:
     assert "2. lo0" in result.stdout
 
 
-def fake_capture_session(events: list[str]):
+def fake_live_components(
+    monkeypatch,
+    events: list[str],
+    *,
+    result: Path | None = None,
+    error: CaptureError | None = None,
+) -> None:
     class FakeCaptureSession:
-        state = CaptureState.STOPPED
+        def __init__(self, dumpcap_path, mergecap_path, interface, *, storage) -> None:
+            events.append(
+                f"session:{dumpcap_path.name}:{mergecap_path.name}:{interface}"
+            )
 
-        def __init__(
-            self, _dumpcap_path, _mergecap_path, interface, *, storage
-        ) -> None:
-            self.interface = interface
-            self.storage = storage
+    class FakeLivePacketSource:
+        def __init__(self, tshark_path) -> None:
+            events.append(f"source:{tshark_path.name}")
 
-        def start(self) -> None:
-            events.append(f"start:{self.interface}")
-            self.state = CaptureState.RUNNING
+        def query(self, _query):
+            raise AssertionError("запрос выполняет только live-TUI")
 
-        def collect_closed_segments(self) -> tuple[Path, ...]:
-            return ()
+        def read_details(self, _number):
+            raise AssertionError("детали читает только live-TUI")
 
-        def close(self) -> bool:
-            events.append("close")
-            self.state = CaptureState.CLOSED
-            return True
+    class FakeLiveCaptureController:
+        def __init__(self, capture, source, *, destination_factory) -> None:
+            events.append("controller")
 
-    return FakeCaptureSession
+    class FakeLiveCaptureApp:
+        def __init__(self, interface, controller, query_packets, read_details) -> None:
+            events.append(f"app:{interface}")
+
+        def run(self) -> Path | None:
+            events.append("run")
+            if error is not None:
+                raise error
+            return result
+
+    monkeypatch.setattr("wispwire.cli.CaptureSession", FakeCaptureSession)
+    monkeypatch.setattr("wispwire.cli.LivePacketSource", FakeLivePacketSource)
+    monkeypatch.setattr("wispwire.cli.LiveCaptureController", FakeLiveCaptureController)
+    monkeypatch.setattr("wispwire.cli.LiveCaptureApp", FakeLiveCaptureApp)
 
 
 def available_capture_tools(name: str) -> ToolStatus:
@@ -118,6 +137,14 @@ def test_capture_reports_missing_dumpcap_without_creating_session(monkeypatch) -
         lambda name: ToolStatus(name, None, None, "не найден"),
     )
     monkeypatch.setattr("wispwire.cli.CaptureSession", unexpected_capture_session)
+    monkeypatch.setattr(
+        "wispwire.cli.LiveCaptureController",
+        unexpected_capture_session,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "wispwire.cli.LiveCaptureApp", unexpected_capture_session, raising=False
+    )
 
     result = CliRunner().invoke(app, ["capture", "--iface", "en0"])
 
@@ -139,6 +166,14 @@ def test_capture_reports_missing_mergecap_without_creating_session(monkeypatch) 
 
     monkeypatch.setattr("wispwire.cli.inspect_tool", inspect)
     monkeypatch.setattr("wispwire.cli.CaptureSession", unexpected_capture_session)
+    monkeypatch.setattr(
+        "wispwire.cli.LiveCaptureController",
+        unexpected_capture_session,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "wispwire.cli.LiveCaptureApp", unexpected_capture_session, raising=False
+    )
 
     result = CliRunner().invoke(app, ["capture", "--iface", "en0"])
 
@@ -158,6 +193,14 @@ def test_capture_rejects_unknown_interface_without_creating_session(
     monkeypatch.setattr("wispwire.cli.inspect_tool", available_capture_tools)
     monkeypatch.setattr("wispwire.cli.list_interfaces", lambda: ("en0",))
     monkeypatch.setattr("wispwire.cli.CaptureSession", unexpected_capture_session)
+    monkeypatch.setattr(
+        "wispwire.cli.LiveCaptureController",
+        unexpected_capture_session,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "wispwire.cli.LiveCaptureApp", unexpected_capture_session, raising=False
+    )
 
     result = CliRunner().invoke(app, ["capture", "--iface", "en1"])
 
@@ -166,123 +209,121 @@ def test_capture_rejects_unknown_interface_without_creating_session(
     assert constructed == []
 
 
-def test_capture_keeps_session_until_keyboard_interrupt(monkeypatch) -> None:
-    events: list[str] = []
+def test_capture_reports_missing_tshark_without_creating_session(monkeypatch) -> None:
+    constructed: list[str] = []
+
+    def inspect(name: str) -> ToolStatus:
+        if name == "tshark":
+            return ToolStatus(name, None, None, "не найден")
+        return available_capture_tools(name)
+
+    def unexpected_component(*_args, **_kwargs) -> None:
+        constructed.append("создан")
+
+    monkeypatch.setattr("wispwire.cli.inspect_tool", inspect)
     monkeypatch.setattr("wispwire.cli.list_interfaces", lambda: ("en0",))
-    monkeypatch.setattr("wispwire.cli.CaptureSession", fake_capture_session(events))
-    monkeypatch.setattr("wispwire.cli.inspect_tool", available_capture_tools)
-    monkeypatch.setattr(
-        "wispwire.cli.sleep", lambda _: (_ for _ in ()).throw(KeyboardInterrupt)
-    )
-
-    result = CliRunner().invoke(app, ["capture", "--iface", "en0"])
-
-    assert result.exit_code == 0
-    assert events == ["start:en0", "close"]
-    assert "Live-захват запущен" in result.output
-    assert "Ctrl-C" in result.output
-
-
-def test_capture_collects_segments_until_limit_is_reached(monkeypatch) -> None:
-    events: list[str] = []
-
-    class LimitedCaptureSession:
-        state = CaptureState.STOPPED
-
-        def __init__(self, *_args, **_kwargs) -> None:
-            pass
-
-        def start(self) -> None:
-            events.append("start")
-            self.state = CaptureState.RUNNING
-
-        def collect_closed_segments(self) -> tuple[Path, ...]:
-            events.append("collect")
-            self.state = CaptureState.LIMIT_REACHED
-            return ()
-
-        def close(self) -> bool:
-            events.append("close")
-            self.state = CaptureState.CLOSED
-            return True
-
-    monkeypatch.setattr("wispwire.cli.inspect_tool", available_capture_tools)
-    monkeypatch.setattr("wispwire.cli.list_interfaces", lambda: ("en0",))
-    monkeypatch.setattr("wispwire.cli.CaptureSession", LimitedCaptureSession)
-    monkeypatch.setattr(
-        "wispwire.cli.sleep",
-        lambda _: (_ for _ in ()).throw(AssertionError("лишнее ожидание")),
-    )
-
-    result = CliRunner().invoke(app, ["capture", "--iface", "en0"])
-
-    assert result.exit_code == 0
-    assert events == ["start", "collect", "close"]
-    assert "лимит" in result.output
-
-
-def test_capture_reports_early_dumpcap_failure_and_closes_session(monkeypatch) -> None:
-    events: list[str] = []
-
-    class FailedCaptureSession:
-        state = CaptureState.STOPPED
-
-        def __init__(self, *_args, **_kwargs) -> None:
-            pass
-
-        def start(self) -> None:
-            events.append("start")
-            self.state = CaptureState.RUNNING
-
-        def collect_closed_segments(self) -> tuple[Path, ...]:
-            events.append("collect")
-            self.state = CaptureState.FAILED
-            raise CaptureError("dumpcap потерял интерфейс")
-
-        def close(self) -> bool:
-            events.append("close")
-            self.state = CaptureState.CLOSED
-            return True
-
-    monkeypatch.setattr("wispwire.cli.inspect_tool", available_capture_tools)
-    monkeypatch.setattr("wispwire.cli.list_interfaces", lambda: ("en0",))
-    monkeypatch.setattr("wispwire.cli.CaptureSession", FailedCaptureSession)
-    monkeypatch.setattr(
-        "wispwire.cli.sleep",
-        lambda _: (_ for _ in ()).throw(AssertionError("сегменты не собраны")),
-    )
+    monkeypatch.setattr("wispwire.cli.CaptureSession", unexpected_component)
+    monkeypatch.setattr("wispwire.cli.LiveCaptureController", unexpected_component)
+    monkeypatch.setattr("wispwire.cli.LiveCaptureApp", unexpected_component)
 
     result = CliRunner().invoke(app, ["capture", "--iface", "en0"])
 
     assert result.exit_code == 1
-    assert events == ["start", "collect", "close"]
+    assert "TShark недоступен" in result.output
+    assert constructed == []
+
+
+def test_capture_opens_live_tui_and_passes_saved_result_to_file_tui(
+    monkeypatch, tmp_path
+) -> None:
+    events: list[str] = []
+    saved = tmp_path / "capture_2026-09-03_12-00-00.pcapng"
+    saved.touch()
+    opened: list[Path] = []
+    fake_live_components(monkeypatch, events, result=saved)
+    monkeypatch.setattr("wispwire.cli.inspect_tool", available_capture_tools)
+    monkeypatch.setattr("wispwire.cli.list_interfaces", lambda: ("en0",))
+    monkeypatch.setattr(
+        "wispwire.cli._open_capture_in_tui", opened.append, raising=False
+    )
+
+    result = CliRunner().invoke(app, ["capture", "--iface", "en0"])
+
+    assert result.exit_code == 0
+    assert events == [
+        "session:dumpcap:mergecap:en0",
+        "source:tshark",
+        "controller",
+        "app:en0",
+        "run",
+    ]
+    assert opened == [saved]
+
+
+def test_capture_does_not_open_file_tui_after_quit(monkeypatch) -> None:
+    events: list[str] = []
+    opened: list[Path] = []
+    fake_live_components(monkeypatch, events, result=None)
+    monkeypatch.setattr("wispwire.cli.inspect_tool", available_capture_tools)
+    monkeypatch.setattr("wispwire.cli.list_interfaces", lambda: ("en0",))
+    monkeypatch.setattr(
+        "wispwire.cli._open_capture_in_tui", opened.append, raising=False
+    )
+
+    result = CliRunner().invoke(app, ["capture", "--iface", "en0"])
+
+    assert result.exit_code == 0
+    assert events[-2:] == ["app:en0", "run"]
+    assert opened == []
+
+
+def test_capture_reports_live_error_without_traceback(monkeypatch) -> None:
+    events: list[str] = []
+    fake_live_components(
+        monkeypatch, events, error=CaptureError("dumpcap потерял интерфейс")
+    )
+    monkeypatch.setattr("wispwire.cli.inspect_tool", available_capture_tools)
+    monkeypatch.setattr("wispwire.cli.list_interfaces", lambda: ("en0",))
+
+    result = CliRunner().invoke(app, ["capture", "--iface", "en0"])
+
+    assert result.exit_code == 1
     assert "dumpcap потерял интерфейс" in result.output
+    assert "Traceback" not in result.output
 
 
-def test_capture_reports_session_start_error(monkeypatch) -> None:
-    events: list[str] = []
+def test_capture_destination_creates_catalog_and_uses_next_free_suffix(
+    monkeypatch, tmp_path
+) -> None:
+    from wispwire import cli
 
-    class FailingCaptureSession:
-        def __init__(self, *_args, **_kwargs) -> None:
-            pass
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 9, 3, 12, 0, 0)
 
-        def start(self) -> None:
-            events.append("start")
-            raise CaptureError("нет прав")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(cli, "datetime", FixedDateTime, raising=False)
+    catalog = tmp_path / "WispWire" / "Captures"
+    first = cli._capture_destination()
+    first.touch()
+    second = cli._capture_destination()
+    second.touch()
 
-        def close(self) -> bool:
-            events.append("close")
-            return True
+    destination = cli._capture_destination()
 
-    monkeypatch.setattr("wispwire.cli.inspect_tool", available_capture_tools)
-    monkeypatch.setattr("wispwire.cli.list_interfaces", lambda: ("en0",))
-    monkeypatch.setattr("wispwire.cli.CaptureSession", FailingCaptureSession)
+    assert first == catalog / "capture_2026-09-03_12-00-00.pcapng"
+    assert second == catalog / "capture_2026-09-03_12-00-00-2.pcapng"
+    assert destination == catalog / "capture_2026-09-03_12-00-00-3.pcapng"
+    assert catalog.is_dir()
+    assert not destination.exists()
 
-    result = CliRunner().invoke(app, ["capture", "--iface", "en0"])
 
-    assert result.exit_code == 1
-    assert "Ошибка live-захвата: нет прав" in result.output
-    assert events == ["start", "close"]
+def test_capture_help_describes_live_tui() -> None:
+    result = CliRunner().invoke(app, ["capture", "--help"])
+
+    assert result.exit_code == 0
+    assert "live-TUI" in result.output
 
 
 def packet() -> PacketSummary:
