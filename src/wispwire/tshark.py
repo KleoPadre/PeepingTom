@@ -77,37 +77,48 @@ def read_packet_details(
     )
 
 
-def build_fields_command(tshark_path: Path, capture_path: Path) -> list[str]:
-    return [
+def build_fields_command(
+    tshark_path: Path,
+    capture_path: Path,
+    display_filter: str | None = None,
+) -> list[str]:
+    command = [
         str(tshark_path),
         "-n",
         "-r",
         str(capture_path),
-        "-T",
-        "fields",
-        "-E",
-        "separator=/t",
-        "-E",
-        "quote=d",
-        "-E",
-        "escape=y",
-        "-E",
-        "occurrence=f",
-        "-e",
-        "frame.number",
-        "-e",
-        "frame.time_relative",
-        "-e",
-        "_ws.col.Source",
-        "-e",
-        "_ws.col.Destination",
-        "-e",
-        "_ws.col.Protocol",
-        "-e",
-        "frame.len",
-        "-e",
-        "_ws.col.Info",
     ]
+    if display_filter:
+        command.extend(["-Y", display_filter])
+    command.extend(
+        [
+            "-T",
+            "fields",
+            "-E",
+            "separator=/t",
+            "-E",
+            "quote=d",
+            "-E",
+            "escape=y",
+            "-E",
+            "occurrence=f",
+            "-e",
+            "frame.number",
+            "-e",
+            "frame.time_relative",
+            "-e",
+            "_ws.col.Source",
+            "-e",
+            "_ws.col.Destination",
+            "-e",
+            "_ws.col.Protocol",
+            "-e",
+            "frame.len",
+            "-e",
+            "_ws.col.Info",
+        ]
+    )
+    return command
 
 
 def parse_packet_row(row: str) -> PacketSummary:
@@ -141,6 +152,7 @@ def iter_packet_summaries(
     capture_path: Path,
     tshark_path: Path,
     limit: int,
+    display_filter: str | None = None,
     popen: Callable[..., subprocess.Popen[str]] = subprocess.Popen,
 ) -> Iterator[PacketSummary]:
     if limit < 1:
@@ -148,7 +160,7 @@ def iter_packet_summaries(
 
     try:
         process = popen(
-            build_fields_command(tshark_path, capture_path),
+            build_fields_command(tshark_path, capture_path, display_filter),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,

@@ -221,6 +221,24 @@ def test_build_fields_command_uses_read_only_tshark_fields() -> None:
     ]
 
 
+def test_build_fields_command_adds_display_filter_without_rewriting() -> None:
+    command = build_fields_command(
+        Path("/opt/bin/tshark"),
+        Path("capture.pcapng"),
+        display_filter='udp && dns.qry.name contains "telegram"',
+    )
+
+    assert command[:6] == [
+        "/opt/bin/tshark",
+        "-n",
+        "-r",
+        "capture.pcapng",
+        "-Y",
+        'udp && dns.qry.name contains "telegram"',
+    ]
+    assert command[6:8] == ["-T", "fields"]
+
+
 def test_parse_packet_row_preserves_tshark_doubled_quotes_and_trailing_backslash() -> (
     None
 ):
@@ -263,6 +281,24 @@ def test_iter_packet_summaries_stops_after_limit() -> None:
     assert packets == [PacketSummary(1, "0.000000", "a", "b", "DNS", 72, "Первый")]
     assert process.terminate_called
     assert process.wait_called
+
+
+def test_iter_packet_summaries_passes_display_filter_to_tshark() -> None:
+    commands: list[list[str]] = []
+    process = FakeProcess(iter(['"1"\t"0.0"\t"a"\t"b"\t"UDP"\t"42"\t"Match"\n']))
+
+    packets = list(
+        iter_packet_summaries(
+            Path("capture.pcapng"),
+            Path("tshark"),
+            limit=10,
+            display_filter="udp",
+            popen=lambda args, **_kwargs: commands.append(args) or process,
+        )
+    )
+
+    assert packets == [PacketSummary(1, "0.0", "a", "b", "UDP", 42, "Match")]
+    assert commands[0][4:6] == ["-Y", "udp"]
 
 
 def test_iter_packet_summaries_drains_stderr_before_waiting_for_process() -> None:
