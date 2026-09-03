@@ -1,12 +1,13 @@
 """Источник пакетов подтверждённых сегментов live-захвата."""
 
+import sqlite3
 import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, replace
 from pathlib import Path
 
 from wispwire.file_source import PacketQuery, PacketQueryResult
-from wispwire.index import PacketIndex, PacketRecord
+from wispwire.index import PacketIndex, PacketIndexUnavailableError, PacketRecord
 from wispwire.packets import PacketDetails, PacketSummary
 from wispwire.sessions import Session, SessionSafetyError, SessionStorage
 from wispwire.tshark import TsharkReadError, iter_packet_summaries, read_packet_details
@@ -159,14 +160,22 @@ class LivePacketSource:
         try:
             index = PacketIndex(index_path, check_same_thread=False)
             session = self._storage.register_file(session, index_path)
-        except Exception:
+        except (
+            OSError,
+            PacketIndexUnavailableError,
+            SessionSafetyError,
+            sqlite3.Error,
+        ) as error:
             if index is not None:
                 index.close()
             try:
                 index_path.unlink()
             except FileNotFoundError:
                 pass
-            self._storage.close_session(session)
+            if not self._storage.close_session(session):
+                raise SessionSafetyError(
+                    "не удалось закрыть сессию live-источника"
+                ) from error
             raise
         return session, index
 

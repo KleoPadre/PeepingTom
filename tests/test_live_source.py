@@ -355,3 +355,29 @@ def test_live_source_removes_new_session_when_index_registration_fails(
 
     assert storage.created_session is not None
     assert not storage.created_session.path.exists()
+
+
+def test_live_source_reports_index_creation_cleanup_failure(
+    tmp_path: Path,
+) -> None:
+    class FailingCleanupStorage(SessionStorage):
+        created_session: Session | None = None
+
+        def create_session(self) -> Session:
+            session = super().create_session()
+            self.created_session = session
+            return session
+
+        def register_file(self, session: Session, path: Path) -> Session:
+            raise SessionSafetyError("не удалось зарегистрировать индекс")
+
+        def close_session(self, session: Session) -> bool:
+            return False
+
+    storage = FailingCleanupStorage(cache_root=tmp_path / "sessions", pid=123)
+
+    with pytest.raises(SessionSafetyError, match="закрыть сессию live-источника"):
+        LivePacketSource(Path("tshark"), storage)
+
+    assert storage.created_session is not None
+    assert storage.created_session.path.exists()

@@ -15,6 +15,7 @@ from wispwire.live_controller import (
     LiveStateChanged,
 )
 from wispwire.packets import PacketSummary
+from wispwire.sessions import SessionSafetyError
 from wispwire.tshark import TsharkReadError
 
 
@@ -102,6 +103,7 @@ class FakeSource:
         self.calls: list[str] = []
         self.thread_ids: list[int] = []
         self.ingest_error: TsharkReadError | None = None
+        self.reset_error: Exception | None = None
         self.close_error: Exception | None = None
         self.log = log
 
@@ -121,6 +123,8 @@ class FakeSource:
 
     def reset(self) -> None:
         self._call("reset")
+        if self.reset_error is not None:
+            raise self.reset_error
         self.packet_count = 0
 
     def close(self) -> None:
@@ -336,6 +340,35 @@ def test_controller_acknowledges_failed_restart_with_new_generation() -> None:
     assert LiveFailure("не удалось перезапустить захват", generation=1) in events
     assert LiveStateChanged(CaptureState.FAILED, 0, 12, generation=1) in events
     assert "reset" not in source.calls
+
+
+def test_controller_stops_restarted_capture_when_source_reset_fails() -> None:
+    log: list[str] = []
+    capture = FakeCapture(log=log)
+    source = FakeSource({}, log=log)
+    source.reset_error = SessionSafetyError("не удалось закрыть старый индекс")
+    controller = LiveCaptureController(capture, source, poll_interval=0.05)
+
+    controller.start()
+    assert wait_until(lambda: capture.calls)
+    capture.state = CaptureState.STOPPED
+    controller.submit("restart")
+    events = events_until(
+        controller,
+        lambda items: any(
+            isinstance(item, LiveStateChanged)
+            and item.state is CaptureState.FAILED
+            and item.generation == 1
+            for item in items
+        ),
+    )
+    controller.submit("quit")
+    controller.join()
+
+    assert log.index("capture:restart") < log.index("source:reset")
+    assert log.index("source:reset") < log.index("capture:stop")
+    assert LiveFailure("не удалось закрыть старый индекс", generation=1) in events
+    assert LiveStateChanged(CaptureState.FAILED, 0, 12, generation=1) in events
 
 
 def test_controller_reports_tshark_ingest_error_without_closing_session(

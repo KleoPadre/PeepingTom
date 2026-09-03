@@ -152,11 +152,26 @@ class LiveCaptureController:
         elif command == "restart":
             try:
                 self._capture.restart()
-                self._source.reset()
-            except (CaptureError, OSError, SessionSafetyError) as error:
+            except (CaptureError, OSError) as error:
                 self._generation += 1
                 self._capture.state = CaptureState.FAILED
                 self._fail(error)
+                return
+            try:
+                self._source.reset()
+            except (OSError, SessionSafetyError) as error:
+                failure: CaptureError | OSError | SessionSafetyError = error
+                try:
+                    if self._capture.state is CaptureState.RUNNING:
+                        self._capture.stop()
+                except (CaptureError, OSError) as stop_error:
+                    failure = CaptureError(
+                        "не удалось сбросить индекс live-захвата; "
+                        f"дополнительно не удалось остановить новый захват: {stop_error}"
+                    )
+                self._generation += 1
+                self._capture.state = CaptureState.FAILED
+                self._fail(failure)
                 return
             self._generation += 1
         elif command == "save":
