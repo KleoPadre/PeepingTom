@@ -2,8 +2,9 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from textual.widgets import DataTable, Static
+from textual.widgets import DataTable, Input, Static
 
+from wispwire.file_source import PacketQuery, PacketQueryResult
 from wispwire.packets import PacketDetails, PacketSummary
 from wispwire.tshark import TsharkReadError, read_packet_details
 from wispwire.tui import WispWireApp
@@ -156,6 +157,85 @@ async def test_app_shows_rich_markup_in_packet_info_literally() -> None:
         table = app.query_one("#packets", DataTable)
 
         assert str(table.get_row_at(0)[-1]) == "[bold]Текст[/bold]"
+
+
+@pytest.mark.asyncio
+async def test_app_focuses_display_filter_with_f_key() -> None:
+    app = WispWireApp((packet(1),), "sample.pcapng", read_details)
+
+    async with app.run_test() as pilot:
+        await pilot.press("f")
+
+        assert app.focused is not None
+        assert app.focused.id == "display-filter"
+
+
+@pytest.mark.asyncio
+async def test_app_updates_table_from_info_search() -> None:
+    packets = (packet(1, info="telegram"), packet(2, info="example"))
+    calls: list[PacketQuery] = []
+
+    def query_packets(query: PacketQuery) -> PacketQueryResult:
+        calls.append(query)
+        return PacketQueryResult((packets[0],), None)
+
+    app = WispWireApp(
+        packets, "sample.pcapng", read_details, query_packets=query_packets
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.press("/")
+        await pilot.press("t", "e", "l")
+        await pilot.pause(0.25)
+
+        table = app.query_one("#packets", DataTable)
+        assert [str(value) for value in table.get_row_at(0)][-1] == "telegram"
+        assert calls[-1].info_query == "tel"
+
+
+@pytest.mark.asyncio
+async def test_app_keeps_previous_rows_when_display_filter_has_error() -> None:
+    packets = (packet(1, info="telegram"),)
+
+    def query_packets(_query: PacketQuery) -> PacketQueryResult:
+        return PacketQueryResult((), "Синтаксическая ошибка display filter")
+
+    app = WispWireApp(
+        packets, "sample.pcapng", read_details, query_packets=query_packets
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.press("f")
+        await pilot.press("u", "d", "p", " ", "&", "&")
+        await pilot.pause(0.25)
+
+        table = app.query_one("#packets", DataTable)
+        assert str(table.get_row_at(0)[-1]) == "telegram"
+        assert "Синтаксическая ошибка display filter" in str(
+            app.query_one("#filter-status", Static).renderable
+        )
+
+
+@pytest.mark.asyncio
+async def test_app_escape_clears_focused_filter() -> None:
+    calls: list[PacketQuery] = []
+    app = WispWireApp(
+        (packet(1),),
+        "sample.pcapng",
+        read_details,
+        query_packets=lambda query: (
+            calls.append(query) or PacketQueryResult((packet(1),), None)
+        ),
+        initial_filter="udp",
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.press("f")
+        await pilot.press("escape")
+        await pilot.pause(0.25)
+
+        assert app.query_one("#display-filter", Input).value == ""
+        assert calls[-1].display_filter == ""
 
 
 @pytest.mark.asyncio

@@ -8,8 +8,10 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import BindingType
 from textual.containers import Container, VerticalScroll
-from textual.widgets import DataTable, Footer, Header, Static
+from textual.timer import Timer
+from textual.widgets import DataTable, Footer, Header, Input, Static
 
+from wispwire.file_source import PacketQuery, PacketQueryResult
 from wispwire.packets import PacketDetails, PacketSummary
 from wispwire.tshark import TsharkReadError
 
@@ -25,11 +27,15 @@ class WispWireApp(App[None]):
     #layout.narrow #packets { width: 1fr; }
     #layout.narrow #details { width: 1fr; }
     #size-warning { display: none; }
+    #filters { height: auto; }
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
         ("q", "quit", "Выход"),
         ("tab", "focus_next", "Сменить фокус"),
+        ("f", "focus_display_filter", "Фильтр"),
+        ("/", "focus_info_search", "Info"),
+        ("escape", "clear_active_filter", "Очистить"),
     ]
 
     def __init__(
@@ -37,17 +43,31 @@ class WispWireApp(App[None]):
         packets: tuple[PacketSummary, ...],
         source_name: str,
         read_details: Callable[[PacketSummary], PacketDetails],
+        query_packets: Callable[[PacketQuery], PacketQueryResult] | None = None,
+        initial_filter: str = "",
     ) -> None:
         super().__init__()
+        self._all_packets = packets
         self._packets = packets
         self._source_name = source_name
         self._read_details = read_details
+        self._query_packets = query_packets
+        self._initial_filter = initial_filter
+        self._filter_timer: Timer | None = None
         self._details_packet_number: int | None = None
         self.title = f"WispWire — {source_name}"
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         yield Static("Минимальный размер терминала — 80×24.", id="size-warning")
+        with Container(id="filters"):
+            yield Input(
+                value=self._initial_filter,
+                placeholder="Display filter",
+                id="display-filter",
+            )
+            yield Input(placeholder="Info search", id="info-search")
+            yield Static(id="filter-status")
         with Container(id="layout"):
             yield DataTable(id="packets")
             with VerticalScroll(id="details"):
@@ -61,9 +81,32 @@ class WispWireApp(App[None]):
         self._update_layout(self.size.width, self.size.height)
         if self._packets:
             self._show_details(self._packets[0])
+        if self._initial_filter and self._query_packets is not None:
+            self._apply_filters()
 
     def on_resize(self, event: events.Resize) -> None:
         self._update_layout(event.size.width, event.size.height)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id not in ("display-filter", "info-search"):
+            return
+        if self._filter_timer is not None:
+            self._filter_timer.stop()
+        self._filter_timer = self.set_timer(0.2, self._apply_filters)
+
+    def action_focus_display_filter(self) -> None:
+        self.query_one("#display-filter", Input).focus()
+
+    def action_focus_info_search(self) -> None:
+        self.query_one("#info-search", Input).focus()
+
+    def action_clear_active_filter(self) -> None:
+        focused = self.focused
+        if isinstance(focused, Input) and focused.id in (
+            "display-filter",
+            "info-search",
+        ):
+            focused.value = ""
 
     def _update_layout(self, width: int, height: int) -> None:
         self.query_one("#size-warning", Static).display = width < 80 or height < 24
@@ -93,10 +136,45 @@ class WispWireApp(App[None]):
             table.add_row(*self._row_values(packet, wide))
         if self._packets:
             table.move_cursor(row=min(selected_row, len(self._packets) - 1), column=0)
+        else:
+            self._details_packet_number = None
+            self.query_one("#details-content", Static).update(
+                Text("Пакеты не найдены.")
+            )
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         if event.cursor_row < len(self._packets):
             self._show_details(self._packets[event.cursor_row])
+
+    def _apply_filters(self) -> None:
+        self._filter_timer = None
+        display_filter = self.query_one("#display-filter", Input).value
+        info_query = self.query_one("#info-search", Input).value
+        if self._query_packets is None:
+            self._replace_packets(self._all_packets)
+            return
+
+        result = self._query_packets(
+            PacketQuery(
+                display_filter=display_filter,
+                info_query=info_query,
+                limit=len(self._all_packets) or 1,
+            )
+        )
+        status = self.query_one("#filter-status", Static)
+        if result.error is not None:
+            status.update(Text(result.error))
+            return
+
+        status.update(Text(""))
+        self._replace_packets(result.packets)
+
+    def _replace_packets(self, packets: tuple[PacketSummary, ...]) -> None:
+        self._packets = packets
+        self._details_packet_number = None
+        self._set_table_width(self.size.width >= 120)
+        if self._packets:
+            self._show_details(self._packets[0])
 
     def _row_values(self, packet: PacketSummary, wide: bool) -> tuple[Text, ...]:
         values = (
