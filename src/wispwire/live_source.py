@@ -77,7 +77,7 @@ class LivePacketSource:
         if query.limit < 1:
             raise ValueError("Размер страницы должен быть положительным")
 
-        display_filter = query.display_filter.strip()
+        display_filter = query.display_filter
         info_query = query.info_query.strip()
         info_numbers = self._info_numbers(info_query)
 
