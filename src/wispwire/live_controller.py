@@ -12,6 +12,7 @@ from typing import Literal, TypeAlias
 from wispwire.capture import CaptureError, CaptureSession, CaptureState
 from wispwire.live_source import LivePacketSource
 from wispwire.packets import PacketSummary
+from wispwire.tshark import TsharkReadError
 
 
 @dataclass(frozen=True)
@@ -111,7 +112,7 @@ class LiveCaptureController:
                         if packets:
                             self._events.put(LivePacketsAdded(packets))
                         self._publish_state()
-                    except (CaptureError, OSError) as error:
+                    except (CaptureError, OSError, TsharkReadError) as error:
                         self._fail(error)
                 threading.Event().wait(self._poll_interval)
         finally:
@@ -140,8 +141,8 @@ class LiveCaptureController:
                 raise CaptureError("нельзя продолжить захват: достигнут лимит размера")
             self._capture.continue_capture()
         elif command == "restart":
-            self._source.reset()
             self._capture.restart()
+            self._source.reset()
         elif command == "save":
             destination = self._destination_factory()
             self._capture.save(destination)
@@ -162,7 +163,7 @@ class LiveCaptureController:
             )
         )
 
-    def _fail(self, error: CaptureError | OSError) -> None:
+    def _fail(self, error: CaptureError | OSError | TsharkReadError) -> None:
         self._events.put(LiveFailure(str(error)))
         self._publish_state()
 

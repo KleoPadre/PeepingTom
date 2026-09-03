@@ -13,6 +13,7 @@ from wispwire.live_controller import (
     LiveStateChanged,
 )
 from wispwire.packets import PacketSummary
+from wispwire.tshark import TsharkReadError
 
 
 def packet(number: int) -> PacketSummary:
@@ -32,17 +33,23 @@ def wait_until(condition: object, timeout: float = 1.0) -> bool:
 
 
 class FakeCapture:
-    def __init__(self, *, segments: tuple[Path, ...] = ()) -> None:
+    def __init__(
+        self, *, segments: tuple[Path, ...] = (), log: list[str] | None = None
+    ) -> None:
         self.segments = segments
         self.state = CaptureState.STOPPED
         self.confirmed_size = 12
         self.calls: list[str] = []
         self.thread_ids: list[int] = []
         self.collect_error: CaptureError | None = None
+        self.restart_error: CaptureError | None = None
+        self.log = log
 
     def _call(self, name: str) -> None:
         self.calls.append(name)
         self.thread_ids.append(threading.get_ident())
+        if self.log is not None:
+            self.log.append(f"capture:{name}")
 
     def start(self) -> None:
         self._call("start")
@@ -64,6 +71,8 @@ class FakeCapture:
 
     def restart(self) -> None:
         self._call("restart")
+        if self.restart_error is not None:
+            raise self.restart_error
         self.state = CaptureState.RUNNING
 
     def save(self, destination: Path) -> Path:
@@ -78,19 +87,28 @@ class FakeCapture:
 
 class FakeSource:
     def __init__(
-        self, packets: dict[tuple[Path, ...], tuple[PacketSummary, ...]]
+        self,
+        packets: dict[tuple[Path, ...], tuple[PacketSummary, ...]],
+        *,
+        log: list[str] | None = None,
     ) -> None:
         self.packets = packets
         self.packet_count = 0
         self.calls: list[str] = []
         self.thread_ids: list[int] = []
+        self.ingest_error: TsharkReadError | None = None
+        self.log = log
 
     def _call(self, name: str) -> None:
         self.calls.append(name)
         self.thread_ids.append(threading.get_ident())
+        if self.log is not None:
+            self.log.append(f"source:{name}")
 
     def ingest(self, segments: tuple[Path, ...]) -> tuple[PacketSummary, ...]:
         self._call("ingest")
+        if self.ingest_error is not None:
+            raise self.ingest_error
         added = self.packets.get(segments, ())
         self.packet_count += len(added)
         return added
@@ -136,8 +154,9 @@ def test_controller_publishes_one_batch_for_new_closed_segments(tmp_path: Path) 
 
 
 def test_controller_runs_commands_in_queue_order_on_one_thread(tmp_path: Path) -> None:
-    capture = FakeCapture()
-    source = FakeSource({})
+    log: list[str] = []
+    capture = FakeCapture(log=log)
+    source = FakeSource({}, log=log)
     destinations = iter((tmp_path / "one.pcapng", tmp_path / "two.pcapng"))
     controller = LiveCaptureController(
         capture,
@@ -173,6 +192,7 @@ def test_controller_runs_commands_in_queue_order_on_one_thread(tmp_path: Path) -
     assert source.calls.count("reset") == 1
     assert source.calls[-1] == "close"
     assert len(set(capture.thread_ids + source.thread_ids)) == 1
+    assert log.index("capture:restart") < log.index("source:reset")
 
 
 def test_controller_reports_failure_without_continue_at_size_limit() -> None:
@@ -197,9 +217,10 @@ def test_controller_reports_failure_without_continue_at_size_limit() -> None:
     )
 
 
-def test_controller_resets_source_before_restart_numbering() -> None:
-    capture = FakeCapture()
-    source = FakeSource({})
+def test_controller_resets_source_after_successful_restart() -> None:
+    log: list[str] = []
+    capture = FakeCapture(log=log)
+    source = FakeSource({}, log=log)
     controller = LiveCaptureController(capture, source, poll_interval=0.05)
 
     controller.start()
@@ -213,7 +234,55 @@ def test_controller_resets_source_before_restart_numbering() -> None:
     controller.submit("quit")
     controller.join()
 
-    assert source.calls.index("reset") < capture.calls.index("restart")
+    assert log.index("capture:restart") < log.index("source:reset")
+
+
+def test_controller_keeps_source_when_restart_fails() -> None:
+    capture = FakeCapture()
+    capture.restart_error = CaptureError("не удалось перезапустить захват")
+    source = FakeSource({})
+    controller = LiveCaptureController(capture, source, poll_interval=0.05)
+
+    controller.start()
+    assert wait_until(lambda: capture.calls)
+    capture.state = CaptureState.STOPPED
+    controller.submit("restart")
+    events = events_until(
+        controller, lambda items: any(isinstance(item, LiveFailure) for item in items)
+    )
+    controller.submit("quit")
+    controller.join()
+
+    assert "reset" not in source.calls
+    assert any(
+        item.message == "не удалось перезапустить захват"
+        for item in events
+        if isinstance(item, LiveFailure)
+    )
+
+
+def test_controller_reports_tshark_ingest_error_without_closing_session(
+    tmp_path: Path,
+) -> None:
+    capture = FakeCapture(segments=(tmp_path / "one.pcapng",))
+    source = FakeSource({})
+    source.ingest_error = TsharkReadError("TShark не прочитал сегмент")
+    controller = LiveCaptureController(capture, source, poll_interval=0.001)
+
+    controller.start()
+    events = events_until(
+        controller, lambda items: any(isinstance(item, LiveFailure) for item in items)
+    )
+    assert "close" not in capture.calls
+    assert "close" not in source.calls
+    controller.submit("quit")
+    controller.join()
+
+    assert any(
+        item.message == "TShark не прочитал сегмент"
+        for item in events
+        if isinstance(item, LiveFailure)
+    )
 
 
 def test_controller_closes_once_after_collect_error() -> None:
