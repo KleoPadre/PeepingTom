@@ -12,6 +12,7 @@ from textual.timer import Timer
 from textual.widgets import DataTable, Footer, Header, Input, Static
 
 from wispwire.file_source import PacketQuery, PacketQueryResult
+from wispwire.packet_widgets import rebuild_packet_table, render_packet_details
 from wispwire.packets import PacketDetails, PacketSummary
 from wispwire.tshark import TsharkReadError
 
@@ -118,24 +119,9 @@ class WispWireApp(App[None]):
 
     def _rebuild_table(self, wide: bool) -> None:
         table = self.query_one("#packets", DataTable)
-        selected_row = table.cursor_row
-        table.clear(columns=True)
-        if wide:
-            table.add_columns(
-                "No.",
-                "Time",
-                "Source",
-                "Destination",
-                "Protocol",
-                "Length",
-                "Info",
-            )
-        else:
-            table.add_columns("No.", "Source", "Protocol", "Info")
-        for packet in self._packets:
-            table.add_row(*self._row_values(packet, wide))
+        rebuild_packet_table(table, self._packets, wide)
         if self._packets:
-            table.move_cursor(row=min(selected_row, len(self._packets) - 1), column=0)
+            return
         else:
             self._details_packet_number = None
             self.query_one("#details-content", Static).update(
@@ -176,20 +162,6 @@ class WispWireApp(App[None]):
         if self._packets:
             self._show_details(self._packets[0])
 
-    def _row_values(self, packet: PacketSummary, wide: bool) -> tuple[Text, ...]:
-        values = (
-            Text(str(packet.number)),
-            Text(packet.relative_time),
-            Text(packet.source),
-            Text(packet.destination),
-            Text(packet.protocol),
-            Text(str(packet.length)),
-            Text(packet.info),
-        )
-        if wide:
-            return values
-        return values[0], values[2], values[4], values[6]
-
     def _show_details(self, packet: PacketSummary) -> None:
         if self._details_packet_number == packet.number:
             return
@@ -210,13 +182,8 @@ class WispWireApp(App[None]):
         except (TsharkReadError, OSError) as error:
             details = (*summary, "", f"Не удалось загрузить детали: {error}")
         else:
-            details = (
-                *summary,
-                "",
-                "Дерево протоколов:",
-                packet_details.protocol_tree,
-                "",
-                "Hex/ASCII:",
-                packet_details.hex_ascii,
+            self.query_one("#details-content", Static).update(
+                render_packet_details(packet, packet_details)
             )
+            return
         self.query_one("#details-content", Static).update(Text("\n".join(details)))

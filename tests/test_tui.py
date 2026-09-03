@@ -5,6 +5,11 @@ import pytest
 from textual.widgets import DataTable, Input, Static
 
 from wispwire.file_source import PacketQuery, PacketQueryResult
+from wispwire.packet_widgets import (
+    packet_row_values,
+    rebuild_packet_table,
+    render_packet_details,
+)
 from wispwire.packets import PacketDetails, PacketSummary
 from wispwire.tshark import TsharkReadError, read_packet_details
 from wispwire.tui import WispWireApp
@@ -28,6 +33,52 @@ def read_details(_: PacketSummary) -> PacketDetails:
 
 def details_text(app: WispWireApp) -> str:
     return str(app.query_one("#details-content", Static).renderable)
+
+
+def test_packet_row_values_uses_literal_text_in_narrow_mode() -> None:
+    values = packet_row_values(packet(7, protocol="[bold]UDP[/bold]"), wide=False)
+
+    assert [str(value) for value in values] == [
+        "7",
+        "10.0.0.1",
+        "[bold]UDP[/bold]",
+        "Запрос",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_rebuild_packet_table_preserves_existing_selected_row() -> None:
+    app = WispWireApp((), "sample.pcapng", read_details)
+
+    async with app.run_test():
+        table = app.query_one("#packets", DataTable)
+        rebuild_packet_table(table, (packet(1), packet(2)), wide=False)
+        table.move_cursor(row=1)
+        rebuild_packet_table(table, (packet(1), packet(2), packet(3)), wide=True)
+
+        assert table.cursor_row == 1
+        assert next(str(value) for value in table.get_row_at(1)) == "2"
+
+
+def test_render_packet_details_uses_literal_text() -> None:
+    details = render_packet_details(
+        packet(7, info="[bold]Запрос[/bold]"),
+        PacketDetails("[red]Frame 7[/red]", "0000  aa"),
+    )
+
+    assert str(details) == (
+        "No.: 7\n"
+        "Time: 0.000000\n"
+        "Source: 10.0.0.1\n"
+        "Destination: 10.0.0.2\n"
+        "Protocol: DNS\n"
+        "Length: 72\n"
+        "Info: [bold]Запрос[/bold]\n\n"
+        "Дерево протоколов:\n"
+        "[red]Frame 7[/red]\n\n"
+        "Hex/ASCII:\n"
+        "0000  aa"
+    )
 
 
 @pytest.mark.asyncio
@@ -191,6 +242,39 @@ async def test_app_updates_table_from_info_search() -> None:
         table = app.query_one("#packets", DataTable)
         assert [str(value) for value in table.get_row_at(0)][-1] == "telegram"
         assert calls[-1].info_query == "tel"
+
+
+@pytest.mark.asyncio
+async def test_app_keeps_rows_details_filters_and_narrow_mode_after_helper_extraction() -> (
+    None
+):
+    packets = (packet(1, info="telegram"), packet(2, info="example"))
+    app = WispWireApp(
+        packets,
+        "sample.pcapng",
+        read_details,
+        query_packets=lambda _: PacketQueryResult((packets[0],), None),
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.press("/")
+        await pilot.press("t")
+        await pilot.pause(0.25)
+        table = app.query_one("#packets", DataTable)
+
+        assert [str(column.label) for column in table.ordered_columns] == [
+            "No.",
+            "Source",
+            "Protocol",
+            "Info",
+        ]
+        assert [str(value) for value in table.get_row_at(0)] == [
+            "1",
+            "10.0.0.1",
+            "DNS",
+            "telegram",
+        ]
+        assert "No.: 1" in details_text(app)
 
 
 @pytest.mark.asyncio
