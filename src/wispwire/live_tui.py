@@ -114,6 +114,7 @@ class LiveCaptureApp(App[Path | None]):
         self._details_requested_number: int | None = None
         self._query_generation = 0
         self._details_generation = 0
+        self._waiting_for_restart_state = False
         self.title = f"WispWire — live-захват {interface}"
 
     def compose(self) -> ComposeResult:
@@ -226,6 +227,8 @@ class LiveCaptureApp(App[Path | None]):
         while self._pending_events:
             event = self._pending_events.popleft()
             if isinstance(event, LivePacketsAdded):
+                if self._waiting_for_restart_state:
+                    continue
                 if packet_batch_handled:
                     deferred.append(event)
                     continue
@@ -234,6 +237,7 @@ class LiveCaptureApp(App[Path | None]):
                 packets_changed = True
             elif isinstance(event, LiveStateChanged):
                 self._state = event.state
+                self._waiting_for_restart_state = False
                 self._show_capture_status(event.packets, event.size)
             elif isinstance(event, LiveFailure):
                 self._set_status(event.message)
@@ -393,6 +397,7 @@ class LiveCaptureApp(App[Path | None]):
         return False
 
     def _clear_packets_for_restart(self) -> None:
+        self._waiting_for_restart_state = True
         self._all_packets = ()
         self._packets = ()
         self._pending_events = deque(

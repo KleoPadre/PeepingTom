@@ -147,7 +147,36 @@ async def test_restart_clears_packets_from_previous_capture() -> None:
     async with app.run_test() as pilot:
         await pilot.pause(0.12)
         await pilot.press("r")
-        controller.publish(LivePacketsAdded((packet(1, info="новый"),)))
+        controller.publish(
+            LiveStateChanged(CaptureState.RUNNING, 0, 0),
+            LivePacketsAdded((packet(1, info="новый"),)),
+        )
+        await pilot.pause(0.11)
+
+        table = app.query_one("#packets", DataTable)
+        assert table.row_count == 1
+        assert str(table.get_row_at(0)[-1]) == "новый"
+
+
+@pytest.mark.asyncio
+async def test_restart_ignores_controller_packets_queued_before_acknowledgement() -> (
+    None
+):
+    controller = FakeController(events=(LiveStateChanged(CaptureState.STOPPED, 0, 0),))
+    app = LiveCaptureApp("en0", controller, query_packets, read_details)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.12)
+        controller.publish(LivePacketsAdded((packet(1, info="старый"),)))
+        await pilot.press("r")
+        await pilot.pause(0.11)
+
+        assert app.query_one("#packets", DataTable).row_count == 0
+
+        controller.publish(
+            LiveStateChanged(CaptureState.RUNNING, 0, 0),
+            LivePacketsAdded((packet(1, info="новый"),)),
+        )
         await pilot.pause(0.11)
 
         table = app.query_one("#packets", DataTable)
