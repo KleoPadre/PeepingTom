@@ -161,12 +161,12 @@ git ls-files | rg '(^|/)(\.claude|\.codex|\.cursor|\.gemini|\.vscode|\.codegraph
 .venv/bin/mypy src
 .venv/bin/wispwire doctor
 .venv/bin/python -m hatchling build -t sdist -t wheel
-shasum -a 256 dist/wispwire-0.1.0.tar.gz dist/wispwire-0.1.0-py3-none-any.whl
-git tag v0.1.0
-git push origin main v0.1.0
+shasum -a 256 dist/wispwire-0.1.1.tar.gz dist/wispwire-0.1.1-py3-none-any.whl
+git tag v0.1.1
+git push origin main v0.1.1
 ```
 
-После появления GitHub Release нужно сверить SHA-256 `wispwire-0.1.0.tar.gz`
+После появления GitHub Release нужно сверить SHA-256 `wispwire-0.1.1.tar.gz`
 с `SHA256SUMS.txt` и использовать этот SHA в Homebrew formula. Formula должна
 ставить `wireshark` и Python-зависимости автоматически. `wireshark-chmodbpf`
 остаётся отдельной macOS cask-зависимостью уровня прав захвата: Homebrew formula

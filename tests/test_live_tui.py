@@ -15,7 +15,7 @@ from wispwire.live_controller import (
     LiveSaved,
     LiveStateChanged,
 )
-from wispwire.live_tui import LiveCaptureApp, LiveCaptureRuntime
+from wispwire.live_tui import LiveCaptureApp, LiveCaptureRuntime, LiveDetailsCompleted
 from wispwire.packets import PacketDetails, PacketSummary
 
 LiveCommand = Literal["stop_and_save", "continue", "restart", "save", "quit"]
@@ -794,6 +794,16 @@ async def test_live_details_and_bytes_are_shown_in_separate_panes() -> None:
         assert "0000  aa bb" not in details
         assert "PACKET BYTES" in packet_bytes
         assert "0000  aa bb" in packet_bytes
+
+
+def test_late_live_details_event_is_ignored_after_widgets_unmount() -> None:
+    controller = FakeController()
+    app = LiveCaptureApp("en0", controller, query_packets, read_details)
+    app._packets = (packet(1),)
+
+    app.on_live_details_completed(
+        LiveDetailsCompleted(0, 1, PacketDetails("Frame 1", "0000  aa"), None)
+    )
 
 
 @pytest.mark.asyncio

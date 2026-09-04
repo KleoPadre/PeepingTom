@@ -16,7 +16,7 @@ from wispwire.wireshark import ToolStatus
 def fake_report() -> DoctorReport:
     return DoctorReport(
         python_version="3.11.9",
-        wispwire_version="0.1.0",
+        wispwire_version="0.1.1",
         tools=(
             ToolStatus("tshark", Path("/opt/bin/tshark"), "4.4.0", None),
             ToolStatus("dumpcap", Path("/opt/bin/dumpcap"), "4.4.0", None),
@@ -41,7 +41,7 @@ def test_doctor_prints_tool_statuses(monkeypatch) -> None:
 def test_doctor_prints_error_status_and_capture_warning(monkeypatch) -> None:
     report = DoctorReport(
         python_version="3.11.9",
-        wispwire_version="0.1.0",
+        wispwire_version="0.1.1",
         tools=(ToolStatus("tshark", None, None, "утилита не найдена в PATH"),),
         interfaces=(),
         capture_warning="live-захват недоступен: установите dumpcap",
