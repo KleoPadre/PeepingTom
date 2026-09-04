@@ -52,7 +52,7 @@ def test_sdist_uses_explicit_release_file_set() -> None:
 def test_homebrew_smoke_script_rewrites_formula_to_local_sdist() -> None:
     script = SMOKE_SCRIPT.read_text()
 
-    assert "wispwire-0.1.0.tar.gz" in script
+    assert "wispwire-0.1.1.tar.gz" in script
     assert "file://" in script
     assert "brew install --formula" in script
     assert "brew test" in script

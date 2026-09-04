@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1 — 2026-09-04
+
+- Исправлена обработка позднего события деталей пакета после закрытия live-TUI.
+- Обновлена Homebrew-подготовка: formula устанавливает WispWire, Python runtime-зависимости и Wireshark CLI одной командой.
+- `doctor` на macOS подсказывает `brew install --cask wireshark-chmodbpf`, если `dumpcap` установлен, но интерфейсы не видны.
+
 ## 0.1.0 — 2026-09-04
 
 - Добавлена команда `wispwire doctor` для проверки Wireshark CLI, прав live-захвата и SQLite FTS5 trigram.

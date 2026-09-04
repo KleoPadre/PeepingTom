@@ -15,6 +15,7 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import BindingType
 from textual.containers import Container, VerticalScroll
+from textual.css.query import NoMatches
 from textual.message import Message
 from textual.timer import Timer
 from textual.widgets import (
@@ -456,7 +457,10 @@ class LiveCaptureApp(App[Path | None]):
         self._show_details(self._packets[selected_row])
 
     def _selected_packet_number(self) -> int | None:
-        table = self.query_one("#packets", DataTable)
+        try:
+            table = self.query_one("#packets", DataTable)
+        except NoMatches:
+            return None
         if table.cursor_row < len(self._packets):
             return self._packets[table.cursor_row].number
         return None
