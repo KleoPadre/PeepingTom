@@ -93,7 +93,9 @@ class Wispwire < Formula
 
   test do
     assert_match "WispWire", shell_output("#{bin}/wispwire --help")
-    assert_match "Диагностика WispWire", shell_output("#{bin}/wispwire doctor")
-    system bin/"wispwire", "doctor"
+    doctor_output = shell_output("#{bin}/wispwire doctor")
+    assert_match "Диагностика WispWire", doctor_output
+    assert_match "tshark", doctor_output
+    refute_match "ОШИБКА", doctor_output
   end
 end
