@@ -4,7 +4,7 @@ from typing import Literal
 
 import pytest
 from textual.containers import VerticalScroll
-from textual.widgets import DataTable, Input, Static
+from textual.widgets import Button, DataTable, Input, OptionList, Select, Static
 
 from wispwire.capture import CaptureState
 from wispwire.file_source import PacketQuery, PacketQueryResult
@@ -15,7 +15,7 @@ from wispwire.live_controller import (
     LiveSaved,
     LiveStateChanged,
 )
-from wispwire.live_tui import LiveCaptureApp
+from wispwire.live_tui import LiveCaptureApp, LiveCaptureRuntime
 from wispwire.packets import PacketDetails, PacketSummary
 
 LiveCommand = Literal["stop_and_save", "continue", "restart", "save", "quit"]
@@ -29,6 +29,18 @@ def packet(number: int, info: str = "Запрос") -> PacketSummary:
         destination="10.0.0.2",
         protocol="DNS",
         length=72,
+        info=info,
+    )
+
+
+def tcp_packet(number: int, info: str = "ACK") -> PacketSummary:
+    return PacketSummary(
+        number=number,
+        relative_time=f"{number - 1}.000000",
+        source="10.0.0.1",
+        destination="10.0.0.2",
+        protocol="TCP",
+        length=86,
         info=info,
     )
 
@@ -95,6 +107,21 @@ async def test_live_app_adds_one_controller_batch_per_update() -> None:
 
 
 @pytest.mark.asyncio
+async def test_live_app_shows_recent_packet_window_instead_of_all_rows() -> None:
+    packets = tuple(packet(number) for number in range(1, 2102))
+    controller = FakeController(events=(LivePacketsAdded(packets),))
+    app = LiveCaptureApp("en0", controller, query_packets, read_details)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.12)
+        table = app.query_one("#packets", DataTable)
+
+        assert table.row_count == 2000
+        assert next(str(value) for value in table.get_row_at(0)) == "102"
+        assert "показаны последние 2000 из 2101" in status_text(app, "#filter-status")
+
+
+@pytest.mark.asyncio
 async def test_live_app_preserves_selected_row_when_batch_arrives() -> None:
     controller = FakeController(events=(LivePacketsAdded((packet(1), packet(2))),))
     app = LiveCaptureApp("en0", controller, query_packets, read_details)
@@ -128,10 +155,265 @@ async def test_live_callbacks_never_run_in_main_thread() -> None:
     async with app.run_test() as pilot:
         await pilot.pause(0.12)
         await pilot.press("f", "d", "n", "s")
+        await pilot.press("enter")
         await pilot.pause(0.25)
 
         assert len(callback_threads) == 2
         assert all(thread is not threading.main_thread() for thread in callback_threads)
+
+
+@pytest.mark.asyncio
+async def test_live_display_filter_runs_only_when_submitted() -> None:
+    calls: list[PacketQuery] = []
+
+    def recording_query(query: PacketQuery) -> PacketQueryResult:
+        calls.append(query)
+        return PacketQueryResult((tcp_packet(1),), None)
+
+    controller = FakeController(events=(LivePacketsAdded((tcp_packet(1),)),))
+    app = LiveCaptureApp("en0", controller, recording_query, read_details)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.12)
+        await pilot.press("f", "t", "c", "p")
+        await pilot.pause(0.25)
+
+        assert calls == []
+
+        await pilot.press(".", "p", "o", "r", "t")
+        await pilot.press("enter")
+        await pilot.pause(0.25)
+
+        assert calls[-1].display_filter == "tcp.port"
+
+
+@pytest.mark.asyncio
+async def test_live_display_filter_shows_tshark_field_hint() -> None:
+    controller = FakeController(events=(LivePacketsAdded((tcp_packet(1),)),))
+    app = LiveCaptureApp(
+        "en0",
+        controller,
+        query_packets,
+        read_details,
+        display_filter_fields=("tcp", "tcp.port", "tcp.srcport", "udp"),
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.12)
+        await pilot.press("f", "t", "c")
+
+        status = status_text(app, "#filter-status")
+        assert "Подсказка:" in status
+        assert "tcp.port" in status
+
+
+@pytest.mark.asyncio
+async def test_live_display_filter_shows_dropdown_suggestions_from_first_symbol() -> (
+    None
+):
+    controller = FakeController(events=(LivePacketsAdded((tcp_packet(1),)),))
+    app = LiveCaptureApp(
+        "en0",
+        controller,
+        query_packets,
+        read_details,
+        display_filter_fields=("dns", "tcp", "tcp.port", "tcp.srcport", "udp"),
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.12)
+        await pilot.press("f", "t")
+        suggestions = app.query_one("#filter-suggestions", OptionList)
+
+        assert suggestions.display is True
+        assert suggestions.option_count == 3
+        assert str(suggestions.get_option_at_index(1).prompt) == "tcp.port ="
+
+        await pilot.press("c", "p", ".")
+
+        assert suggestions.option_count == 2
+        assert str(suggestions.get_option_at_index(0).prompt) == "tcp.port ="
+
+
+@pytest.mark.asyncio
+async def test_live_display_filter_marks_input_valid_after_successful_query() -> None:
+    controller = FakeController(events=(LivePacketsAdded((tcp_packet(1),)),))
+
+    def successful_query(_query: PacketQuery) -> PacketQueryResult:
+        return PacketQueryResult((tcp_packet(1),), None)
+
+    app = LiveCaptureApp("en0", controller, successful_query, read_details)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.12)
+        await pilot.press("f", "t", "c", "p", "enter")
+        await pilot.pause(0.25)
+
+        display_filter = app.query_one("#display-filter", Input)
+        assert display_filter.has_class("filter-valid")
+        assert not display_filter.has_class("filter-invalid")
+
+
+@pytest.mark.asyncio
+async def test_live_display_filter_marks_input_invalid_after_tshark_error() -> None:
+    controller = FakeController(events=(LivePacketsAdded((tcp_packet(1),)),))
+
+    def failing_query(_query: PacketQuery) -> PacketQueryResult:
+        return PacketQueryResult((), "Syntax error")
+
+    app = LiveCaptureApp("en0", controller, failing_query, read_details)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.12)
+        await pilot.press("f", "t", "c", "p", " ", "&", "&", "enter")
+        await pilot.pause(0.25)
+
+        display_filter = app.query_one("#display-filter", Input)
+        assert display_filter.has_class("filter-invalid")
+        assert not display_filter.has_class("filter-valid")
+
+
+@pytest.mark.asyncio
+async def test_live_display_filter_marks_unknown_field_invalid_while_typing() -> None:
+    controller = FakeController(events=(LivePacketsAdded((tcp_packet(1),)),))
+    app = LiveCaptureApp(
+        "en0",
+        controller,
+        query_packets,
+        read_details,
+        display_filter_fields=("tcp", "tcp.port", "tcp.srcport", "udp"),
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.12)
+        await pilot.press("f")
+        await pilot.press(*tuple("tcp.dddsdsddsvv"))
+        await pilot.pause(0.1)
+
+        display_filter = app.query_one("#display-filter", Input)
+        assert display_filter.has_class("filter-invalid")
+        assert not display_filter.has_class("filter-valid")
+
+
+@pytest.mark.asyncio
+async def test_live_app_has_interface_selector_and_no_info_search() -> None:
+    controller = FakeController()
+    app = LiveCaptureApp(
+        "en0",
+        controller,
+        query_packets,
+        read_details,
+        available_interfaces=("en0", "lo0"),
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.12)
+
+        selector = app.query_one("#interface-select", Select)
+        assert selector.value == "en0"
+        assert not app.query("#info-search")
+
+
+@pytest.mark.asyncio
+async def test_live_app_switches_interface_with_fresh_runtime() -> None:
+    first = FakeController(events=(LivePacketsAdded((packet(1, "старый"),)),))
+    second = FakeController(events=(LivePacketsAdded((packet(1, "новый"),)),))
+    created: list[str] = []
+
+    def runtime_factory(interface: str) -> LiveCaptureRuntime:
+        created.append(interface)
+        return LiveCaptureRuntime(second, query_packets, read_details)
+
+    app = LiveCaptureApp(
+        "en0",
+        first,
+        query_packets,
+        read_details,
+        available_interfaces=("en0", "lo0"),
+        runtime_factory=runtime_factory,
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.12)
+        app.query_one("#display-filter", Input).value = "tcp"
+
+        app.query_one("#interface-select", Select).value = "lo0"
+        await pilot.pause(0.12)
+
+        table = app.query_one("#packets", DataTable)
+        assert created == ["lo0"]
+        assert first.commands == ["quit"]
+        assert first.joined
+        assert second.started
+        assert app.query_one("#display-filter", Input).value == ""
+        assert table.row_count == 1
+        assert str(table.get_row_at(0)[-1]) == "новый"
+
+
+@pytest.mark.asyncio
+async def test_live_filter_buttons_use_distinct_variants_and_labels() -> None:
+    controller = FakeController()
+    app = LiveCaptureApp("en0", controller, query_packets, read_details)
+
+    async with app.run_test():
+        apply_button = app.query_one("#apply-filter", Button)
+        clear_button = app.query_one("#clear-filter", Button)
+
+        assert str(apply_button.label) == "Apply"
+        assert apply_button.variant == "primary"
+        assert str(clear_button.label) == "Cancel"
+        assert clear_button.variant == "warning"
+
+
+@pytest.mark.asyncio
+async def test_live_filter_buttons_apply_and_clear_display_filter() -> None:
+    calls: list[PacketQuery] = []
+
+    def recording_query(query: PacketQuery) -> PacketQueryResult:
+        calls.append(query)
+        return PacketQueryResult((packet(1),), None)
+
+    controller = FakeController(events=(LivePacketsAdded((packet(1),)),))
+    app = LiveCaptureApp("en0", controller, recording_query, read_details)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.12)
+        await pilot.press("f", "d", "n", "s")
+        await pilot.click("#apply-filter")
+        await pilot.pause(0.25)
+        assert calls[-1].display_filter == "dns"
+
+        await pilot.click("#clear-filter")
+        await pilot.pause(0.25)
+
+        assert app.query_one("#display-filter", Input).value == ""
+        assert len(calls) == 1
+        assert app.query_one("#packets", DataTable).row_count == 1
+
+
+@pytest.mark.asyncio
+async def test_live_display_filter_error_is_human_readable() -> None:
+    controller = FakeController(events=(LivePacketsAdded((tcp_packet(1),)),))
+
+    def failing_query(_query: PacketQuery) -> PacketQueryResult:
+        return PacketQueryResult(
+            (),
+            'tshark: "TCP" is not a valid protocol or protocol field.\n'
+            "    TCP\n"
+            "    ^~~",
+        )
+
+    app = LiveCaptureApp("en0", controller, failing_query, read_details)
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.12)
+        await pilot.press("f", "T", "C", "P", "enter")
+        await pilot.pause(0.25)
+
+        status = status_text(app, "#filter-status")
+        assert "Невалидный display filter" in status
+        assert "`tcp`" in status
+        assert "tshark:" not in status
 
 
 @pytest.mark.asyncio
@@ -450,14 +732,6 @@ async def test_live_app_focuses_and_clears_filters() -> None:
         await pilot.press("escape")
         assert display_filter.value == ""
 
-        app.query_one("#packets", DataTable).focus()
-        await pilot.press("/", "d", "n", "s")
-        info_search = app.query_one("#info-search", Input)
-        assert app.focused is info_search
-
-        await pilot.press("escape")
-        assert info_search.value == ""
-
 
 @pytest.mark.asyncio
 async def test_display_filter_error_keeps_previous_rows() -> None:
@@ -471,6 +745,7 @@ async def test_display_filter_error_keeps_previous_rows() -> None:
     async with app.run_test() as pilot:
         await pilot.pause(0.12)
         await pilot.press("f", "u", "d", "p", " ", "&", "&")
+        await pilot.press("enter")
         await pilot.pause(0.25)
 
         table = app.query_one("#packets", DataTable)
@@ -497,6 +772,28 @@ async def test_details_reader_receives_global_packet_number() -> None:
         await pilot.press("down")
 
         assert numbers == [41, 82]
+
+
+@pytest.mark.asyncio
+async def test_live_details_and_bytes_are_shown_in_separate_panes() -> None:
+    controller = FakeController(events=(LivePacketsAdded((packet(1),)),))
+    app = LiveCaptureApp(
+        "en0",
+        controller,
+        query_packets,
+        lambda _number: PacketDetails("Frame 1\nEthernet II", "0000  aa bb"),
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.12)
+
+        details = str(app.query_one("#details-content", Static).renderable)
+        packet_bytes = str(app.query_one("#bytes-content", Static).renderable)
+        assert "PACKET DETAILS" in details
+        assert "Frame 1" in details
+        assert "0000  aa bb" not in details
+        assert "PACKET BYTES" in packet_bytes
+        assert "0000  aa bb" in packet_bytes
 
 
 @pytest.mark.asyncio

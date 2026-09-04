@@ -156,10 +156,30 @@ def test_doctor_warns_when_dumpcap_returns_no_interfaces() -> None:
     def fake_inspect(name: str) -> ToolStatus:
         return ToolStatus(name, Path(f"/opt/bin/{name}"), "4.4.0", None)
 
-    report = collect_doctor_report(inspect=fake_inspect, interfaces=lambda: ())
+    report = collect_doctor_report(
+        inspect=fake_inspect,
+        interfaces=lambda: (),
+        platform_system=lambda: "Linux",
+    )
 
     assert report.interfaces == ()
     assert (
         report.capture_warning
         == "live-захват недоступен: dumpcap не вернул доступных интерфейсов"
+    )
+
+
+def test_doctor_suggests_chmodbpf_when_macos_dumpcap_returns_no_interfaces() -> None:
+    def fake_inspect(name: str) -> ToolStatus:
+        return ToolStatus(name, Path(f"/opt/bin/{name}"), "4.6.8", None)
+
+    report = collect_doctor_report(
+        inspect=fake_inspect,
+        interfaces=lambda: (),
+        platform_system=lambda: "Darwin",
+    )
+
+    assert report.capture_warning == (
+        "live-захват недоступен: dumpcap не вернул доступных интерфейсов. "
+        "На macOS установите права захвата: brew install --cask wireshark-chmodbpf"
     )

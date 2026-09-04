@@ -121,6 +121,49 @@ def build_fields_command(
     return command
 
 
+def build_display_filter_fields_command(tshark_path: Path) -> list[str]:
+    """Команда для чтения display-filter полей из установленного TShark."""
+
+    return [str(tshark_path), "-G", "fields"]
+
+
+def parse_display_filter_fields(output: str) -> tuple[str, ...]:
+    """Вернуть отсортированные имена display-filter протоколов и полей."""
+
+    fields: set[str] = set()
+    for row in output.splitlines():
+        columns = row.split("\t")
+        if len(columns) < 4:
+            continue
+        kind = columns[0]
+        if kind == "P" and columns[3]:
+            fields.add(columns[3])
+        elif kind == "F" and len(columns) >= 3 and columns[2]:
+            fields.add(columns[2])
+    return tuple(sorted(fields))
+
+
+def read_display_filter_fields(
+    tshark_path: Path,
+    run: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> tuple[str, ...]:
+    """Прочитать поддерживаемые display-filter поля из TShark."""
+
+    try:
+        result = run(
+            build_display_filter_fields_command(tshark_path),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=3,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ()
+    if result.returncode != 0:
+        return ()
+    return parse_display_filter_fields(result.stdout)
+
+
 def parse_packet_row(row: str) -> PacketSummary:
     try:
         fields = next(csv.reader([row], delimiter="\t", quotechar='"', strict=True))

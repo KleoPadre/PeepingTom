@@ -10,10 +10,14 @@ from wispwire.diagnostics import collect_doctor_report, list_interfaces
 from wispwire.file_source import FilePacketSource
 from wispwire.live_controller import LiveCaptureController
 from wispwire.live_source import LivePacketSource
-from wispwire.live_tui import LiveCaptureApp
+from wispwire.live_tui import LiveCaptureApp, LiveCaptureRuntime
 from wispwire.packets import PacketDetails, PacketSummary
 from wispwire.sessions import SessionStorage
-from wispwire.tshark import TsharkReadError, read_packet_details
+from wispwire.tshark import (
+    TsharkReadError,
+    read_display_filter_fields,
+    read_packet_details,
+)
 from wispwire.tui import WispWireApp
 from wispwire.wireshark import inspect_tool
 
@@ -94,25 +98,37 @@ def capture(
     if tshark.path is None or tshark.error is not None:
         console.print("TShark недоступен. Запустите `wispwire doctor` для проверки.")
         raise typer.Exit(code=1)
+    dumpcap_path = dumpcap.path
+    mergecap_path = mergecap.path
+    tshark_path = tshark.path
 
-    session = CaptureSession(
-        dumpcap.path,
-        mergecap.path,
-        interface,
-        storage=SessionStorage(),
-    )
     try:
-        source = LivePacketSource(tshark.path)
-        controller = LiveCaptureController(
-            session,
-            source,
-            destination_factory=_capture_destination,
-        )
+
+        def create_runtime(selected_interface: str) -> LiveCaptureRuntime:
+            session = CaptureSession(
+                dumpcap_path,
+                mergecap_path,
+                selected_interface,
+                storage=SessionStorage(),
+            )
+            source = LivePacketSource(tshark_path)
+            controller = LiveCaptureController(
+                session,
+                source,
+                destination_factory=_capture_destination,
+            )
+            return LiveCaptureRuntime(controller, source.query, source.read_details)
+
+        runtime = create_runtime(interface)
+        display_filter_fields = read_display_filter_fields(tshark_path)
         saved_path = LiveCaptureApp(
             interface,
-            controller,
-            source.query,
-            source.read_details,
+            runtime.controller,
+            runtime.query_packets,
+            runtime.read_details,
+            display_filter_fields=display_filter_fields,
+            available_interfaces=list_interfaces(),
+            runtime_factory=create_runtime,
         ).run()
         if saved_path is not None:
             _open_capture_in_tui(saved_path)

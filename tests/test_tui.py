@@ -46,6 +46,20 @@ def test_packet_row_values_uses_literal_text_in_narrow_mode() -> None:
     ]
 
 
+def test_packet_row_values_styles_known_protocol_badges() -> None:
+    values = packet_row_values(packet(7, protocol="TLSv1.2"), wide=True)
+
+    assert str(values[4]) == "TLSv1.2"
+    assert values[4].style == "bold green on #12382d"
+
+
+def test_packet_row_values_keeps_unknown_protocol_readable() -> None:
+    values = packet_row_values(packet(7, protocol="CUSTOM"), wide=True)
+
+    assert str(values[4]) == "CUSTOM"
+    assert values[4].style == "bold white on #303030"
+
+
 @pytest.mark.asyncio
 async def test_rebuild_packet_table_preserves_existing_selected_row() -> None:
     app = WispWireApp((), "sample.pcapng", read_details)
@@ -298,6 +312,32 @@ async def test_app_keeps_previous_rows_when_display_filter_has_error() -> None:
         assert "Синтаксическая ошибка display filter" in str(
             app.query_one("#filter-status", Static).renderable
         )
+
+
+@pytest.mark.asyncio
+async def test_app_shows_human_display_filter_error() -> None:
+    packets = (packet(1, protocol="TCP"),)
+
+    def query_packets(_query: PacketQuery) -> PacketQueryResult:
+        return PacketQueryResult(
+            (),
+            'tshark: "TCP" is not a valid protocol or protocol field.\n'
+            "    TCP\n"
+            "    ^~~",
+        )
+
+    app = WispWireApp(
+        packets, "sample.pcapng", read_details, query_packets=query_packets
+    )
+
+    async with app.run_test() as pilot:
+        await pilot.press("f", "T", "C", "P")
+        await pilot.pause(0.25)
+
+        status = str(app.query_one("#filter-status", Static).renderable)
+        assert "Невалидный display filter" in status
+        assert "`tcp`" in status
+        assert "tshark:" not in status
 
 
 @pytest.mark.asyncio

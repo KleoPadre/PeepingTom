@@ -9,9 +9,12 @@ from wispwire.packets import PacketDetails, PacketSummary
 from wispwire.tshark import (
     TsharkReadError,
     build_details_command,
+    build_display_filter_fields_command,
     build_fields_command,
     iter_packet_summaries,
+    parse_display_filter_fields,
     parse_packet_row,
+    read_display_filter_fields,
     read_packet_details,
 )
 
@@ -237,6 +240,58 @@ def test_build_fields_command_adds_display_filter_without_rewriting() -> None:
         'udp && dns.qry.name contains "telegram"',
     ]
     assert command[6:8] == ["-T", "fields"]
+
+
+def test_build_display_filter_fields_command_asks_tshark_for_supported_syntax() -> None:
+    assert build_display_filter_fields_command(Path("/opt/bin/tshark")) == [
+        "/opt/bin/tshark",
+        "-G",
+        "fields",
+    ]
+
+
+def test_parse_display_filter_fields_reads_protocol_and_field_abbreviations() -> None:
+    output = (
+        "P\tTransmission Control Protocol\tTCP\ttcp\n"
+        "F\tSource Port\ttcp.srcport\tFT_UINT16\ttcp\tBASE_DEC\t0x0\n"
+        "F\tDestination Port\ttcp.dstport\tFT_UINT16\ttcp\tBASE_DEC\t0x0\n"
+        "F\tQuery Name\tdns.qry.name\tFT_STRING\tdns\t\t0x0\n"
+        "F\tMalformed\t\tFT_STRING\tdns\t\t0x0"
+    )
+
+    assert parse_display_filter_fields(output) == (
+        "dns.qry.name",
+        "tcp",
+        "tcp.dstport",
+        "tcp.srcport",
+    )
+
+
+def test_read_display_filter_fields_runs_tshark_with_timeout() -> None:
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def recording_run(
+        *args: object, **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        calls.append((args, kwargs))
+        return completed("P\tTransmission Control Protocol\tTCP\ttcp\n")
+
+    assert read_display_filter_fields(Path("tshark"), run=recording_run) == ("tcp",)
+    assert calls == [
+        (
+            (["tshark", "-G", "fields"],),
+            {"capture_output": True, "text": True, "check": False, "timeout": 3},
+        )
+    ]
+
+
+def test_read_display_filter_fields_returns_empty_tuple_on_tshark_error() -> None:
+    def failing_run(
+        *_args: object, **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        return completed("", stderr="ошибка", returncode=2)
+
+    assert read_display_filter_fields(Path("tshark"), run=failing_run) == ()
 
 
 def test_parse_packet_row_preserves_tshark_doubled_quotes_and_trailing_backslash() -> (

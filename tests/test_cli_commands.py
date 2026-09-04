@@ -107,7 +107,23 @@ def fake_live_components(
             events.append("controller")
 
     class FakeLiveCaptureApp:
-        def __init__(self, interface, controller, query_packets, read_details) -> None:
+        def __init__(
+            self,
+            interface,
+            controller,
+            query_packets,
+            read_details,
+            *,
+            display_filter_fields=(),
+            available_interfaces=(),
+            runtime_factory=None,
+        ) -> None:
+            if display_filter_fields:
+                events.append(f"fields:{','.join(display_filter_fields)}")
+            if available_interfaces:
+                events.append(f"interfaces:{','.join(available_interfaces)}")
+            if runtime_factory is not None:
+                events.append("runtime-factory")
             events.append(f"app:{interface}")
 
         def run(self) -> Path | None:
@@ -244,6 +260,9 @@ def test_capture_opens_live_tui_and_passes_saved_result_to_file_tui(
     monkeypatch.setattr("wispwire.cli.inspect_tool", available_capture_tools)
     monkeypatch.setattr("wispwire.cli.list_interfaces", lambda: ("en0",))
     monkeypatch.setattr(
+        "wispwire.cli.read_display_filter_fields", lambda _path: ("tcp", "tcp.port")
+    )
+    monkeypatch.setattr(
         "wispwire.cli._open_capture_in_tui", opened.append, raising=False
     )
 
@@ -254,6 +273,9 @@ def test_capture_opens_live_tui_and_passes_saved_result_to_file_tui(
         "session:dumpcap:mergecap:en0",
         "source:tshark",
         "controller",
+        "fields:tcp,tcp.port",
+        "interfaces:en0",
+        "runtime-factory",
         "app:en0",
         "run",
     ]

@@ -11,6 +11,7 @@ from textual.containers import Container, VerticalScroll
 from textual.timer import Timer
 from textual.widgets import DataTable, Footer, Header, Input, Static
 
+from wispwire.display_filters import format_display_filter_error
 from wispwire.file_source import PacketQuery, PacketQueryResult
 from wispwire.packet_widgets import rebuild_packet_table, render_packet_details
 from wispwire.packets import PacketDetails, PacketSummary
@@ -149,7 +150,7 @@ class WispWireApp(App[None]):
         )
         status = self.query_one("#filter-status", Static)
         if result.error is not None:
-            status.update(Text(result.error))
+            status.update(Text(format_display_filter_error(result.error)))
             return
 
         status.update(Text(""))

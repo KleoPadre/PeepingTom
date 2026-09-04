@@ -57,6 +57,7 @@ def collect_doctor_report(
     inspect: Callable[[str], ToolStatus] = inspect_tool,
     interfaces: Callable[[], tuple[str, ...]] = list_interfaces,
     sqlite_check: Callable[[], SqliteFeatureStatus] = check_fts5_trigram,
+    platform_system: Callable[[], str] = platform.system,
 ) -> DoctorReport:
     """Собрать статус инструментов без запуска live-захвата."""
     tools = tuple(inspect(name) for name in ("tshark", "dumpcap", "mergecap"))
@@ -70,9 +71,16 @@ def collect_doctor_report(
     elif not dumpcap_available:
         capture_warning = "live-захват недоступен: установите dumpcap"
     elif not available_interfaces:
-        capture_warning = (
-            "live-захват недоступен: dumpcap не вернул доступных интерфейсов"
-        )
+        if platform_system() == "Darwin":
+            capture_warning = (
+                "live-захват недоступен: dumpcap не вернул доступных интерфейсов. "
+                "На macOS установите права захвата: "
+                "brew install --cask wireshark-chmodbpf"
+            )
+        else:
+            capture_warning = (
+                "live-захват недоступен: dumpcap не вернул доступных интерфейсов"
+            )
     else:
         capture_warning = None
 
