@@ -1,0 +1,19 @@
+# Локальное окружение Python и результаты проверок
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Служебные артефакты агентной разработки
+.superpowers/
+.worktrees/
+.claude/
+.codegraph/
+.codex/
+.cursor/
+.gemini/
+.vscode/
+.mcp.json
+GEMINI.md
