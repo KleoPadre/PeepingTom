@@ -17,7 +17,8 @@ def test_homebrew_formula_installs_runtime_dependencies() -> None:
         "0000000000000000000000000000000000000000000000000000000000000000"
         not in formula
     )
-    assert 'system bin/"wispwire", "doctor"' in formula
+    assert 'doctor_output = shell_output("#{bin}/wispwire doctor")' in formula
+    assert 'refute_match "ОШИБКА", doctor_output' in formula
 
 
 def test_homebrew_formula_vendors_all_python_resources() -> None:
